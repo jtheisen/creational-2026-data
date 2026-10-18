@@ -1,0 +1,20 @@
+<tr>
+    <td><strong>@Planned.Id.Key</strong></td>
+    <td><span class="status @Planned.Disposition.ToString().ToLowerInvariant()">@Planned.Disposition</span></td>
+    <td>@Planned.Reason</td>
+    <td>@(State?.Outcome ?? "missing")</td>
+    <td>
+        @if (State?.ManifestPath is { Length: > 0 } marker)
+        {
+            <a href="@marker" target="_blank" rel="noopener noreferrer">Output group</a>
+        }
+    </td>
+    <td>@(State?.Error ?? State?.StaleReason ?? "")</td>
+    <td><button type="button" @onclick="() => OnMarkStale.InvokeAsync(Planned.Id)">Mark stale</button></td>
+</tr>
+
+@code {
+    [Parameter, EditorRequired] public PlannedTarget Planned { get; set; } = default!;
+    [Parameter] public TargetState? State { get; set; }
+    [Parameter] public EventCallback<TargetId> OnMarkStale { get; set; }
+}

@@ -1,0 +1,21 @@
+[Unit]
+Description=Build Wikimedia lifeform candidate Parquet pool
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=azureuser
+WorkingDirectory=/home/azureuser
+Environment=TMPDIR=/home/azureuser/extract-work
+ExecStart=/home/azureuser/wikimedia-venv/bin/python -u /home/azureuser/build_pool_set.py
+Restart=on-failure
+RestartSec=300
+KillMode=control-group
+NoNewPrivileges=true
+UMask=0077
+StandardOutput=append:/home/azureuser/build_pool_set.log
+StandardError=append:/home/azureuser/build_pool_set.log
+
+[Install]
+WantedBy=multi-user.target

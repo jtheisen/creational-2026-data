@@ -1,0 +1,22 @@
+[Unit]
+Description=Extract lifeform candidates from the complete Wikimedia blob import
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=azureuser
+WorkingDirectory=/home/azureuser
+ExecStart=/home/azureuser/wikimedia-venv/bin/python -u /home/azureuser/extract_blob_set.py
+Restart=on-failure
+RestartSec=300
+StandardOutput=append:/home/azureuser/extract_blob_set.log
+StandardError=append:/home/azureuser/extract_blob_set.log
+Environment=TMPDIR=/home/azureuser/extract-work
+UMask=0077
+NoNewPrivileges=true
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,20 @@
+[Unit]
+Description=Mirror pinned Wikimedia English current export into Azure Blob Storage
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=azureuser
+WorkingDirectory=/home/azureuser
+ExecStart=/usr/bin/python3 -u /home/azureuser/copy_dump_set.py
+Restart=on-failure
+RestartSec=300
+StandardOutput=append:/home/azureuser/copy_dump_set.log
+StandardError=append:/home/azureuser/copy_dump_set.log
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

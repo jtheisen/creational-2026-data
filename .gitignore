@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+*.pem
+*.log
+.env
+.env.*
+.superpowers/
+data/
+results/
+apps/**/bin/
+apps/**/obj/
+benchmarks/duckdb_net_probe/bin/
+benchmarks/duckdb_net_probe/obj/
+benchmarks/rust_xml_bench/target/

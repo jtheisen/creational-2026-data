@@ -1,0 +1,156 @@
+@page "/collections/enwiki-2026-10-01"
+@implements IAsyncDisposable
+@inject CollectionImportEngine Engine
+@inject ImportCoordinator Coordinator
+@inject Creational.Dataflow.Storage.ITargetRepository Repository
+@inject TransferLedger Ledger
+
+<p><a href="/">← Collections</a></p>
+<h1>English Wikipedia · 2026-10-01</h1>
+<p>Mark an output group stale, inspect the resulting plan, then start the collection import. Image downloads are managed separately.</p>
+
+<div class="actions">
+    <button type="button" @onclick="StartImport">Import collection</button>
+    <button type="button" class="secondary" @onclick="Refresh">Refresh now</button>
+</div>
+@if (!string.IsNullOrEmpty(_message))
+{
+    <p class="notice" role="status">@_message</p>
+}
+@if (!string.IsNullOrEmpty(_error))
+{
+    <p class="error" role="alert">@_error</p>
+}
+
+@if (_snapshot is null)
+{
+    <p>Loading targets…</p>
+}
+else
+{
+    <div class="summary">
+        @foreach (var item in Enum.GetValues<TargetDisposition>())
+        {
+            <div><strong>@_snapshot.Plan.Targets.Count(t => t.Disposition == item)</strong><span>@item</span></div>
+        }
+    </div>
+    @if (Coordinator.Snapshots().Count > 0)
+    {
+        <section class="target-group">
+            <h2>Import runs</h2>
+            <table>
+                <thead><tr><th>Run</th><th>State</th><th>Started</th><th>Detail</th></tr></thead>
+                <tbody>
+                    @foreach (var run in Coordinator.Snapshots().Take(5))
+                    {
+                        <tr><td>@run.RunId[..8]</td><td>@run.State</td><td>@run.StartedAt.ToLocalTime()</td><td>@run.Error</td></tr>
+                    }
+                </tbody>
+            </table>
+        </section>
+    }
+    @foreach (var group in CollectionPageModel.Groups(_snapshot.Plan))
+    {
+        <section class="target-group">
+            <h2>@group.Kind <small>@group.Targets.Count targets</small></h2>
+            <div class="table-scroll">
+                <table>
+                    <thead><tr><th>Target</th><th>Plan</th><th>Reason</th><th>Last outcome</th><th>Output</th><th>Detail</th><th>Action</th></tr></thead>
+                    <tbody>
+                        @foreach (var planned in group.Targets)
+                        {
+                            _snapshot.States.TryGetValue(planned.Id, out var state);
+                            <TargetRow Planned="planned" State="state" OnMarkStale="MarkStale" />
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    }
+}
+
+@if (Ledger.All().Count > 0)
+{
+    <section class="target-group">
+        <h2>Live transfers</h2>
+        <div class="table-scroll">
+            <table>
+                <thead><tr><th>Target</th><th>State</th><th>Bytes</th><th>Expected bytes</th><th>Detail</th></tr></thead>
+                <tbody>
+                    @foreach (var transfer in Ledger.All())
+                    {
+                        <tr><td>@transfer.Target</td><td>@transfer.State</td><td>@transfer.Bytes.ToString("N0")</td>
+                            <td>@transfer.ExpectedBytes?.ToString("N0")</td><td>@transfer.Error</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
+}
+
+@code {
+    private CollectionPlanSnapshot? _snapshot;
+    private string? _message;
+    private string? _error;
+    private readonly CancellationTokenSource _refreshStop = new();
+    private Task? _refreshTask;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await Refresh();
+        _refreshTask = RefreshLoopAsync();
+    }
+
+    private async Task Refresh()
+    {
+        try
+        {
+            _snapshot = await Engine.GetRecordedPlanAsync(October2026Collection.Collection, _refreshStop.Token);
+            _error = null;
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            _error = error.Message;
+        }
+    }
+
+    private async Task RefreshLoopAsync()
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+            while (await timer.WaitForNextTickAsync(_refreshStop.Token))
+                await InvokeAsync(async () => { await Refresh(); StateHasChanged(); });
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task MarkStale(TargetId id)
+    {
+        try
+        {
+            await Repository.MarkStaleAsync(id, "Marked in dashboard", _refreshStop.Token);
+            _message = $"Marked {id} stale. The plan below shows what would run.";
+            await Refresh();
+        }
+        catch (Exception error) { _error = error.Message; }
+    }
+
+    private async Task StartImport()
+    {
+        try
+        {
+            var run = await Coordinator.StartOrGetAsync(October2026Collection.Collection, CancellationToken.None);
+            _message = $"Collection import started: {run}";
+            await Refresh();
+        }
+        catch (Exception error) { _error = error.Message; }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _refreshStop.Cancel();
+        if (_refreshTask is not null) await _refreshTask;
+        _refreshStop.Dispose();
+    }
+}
