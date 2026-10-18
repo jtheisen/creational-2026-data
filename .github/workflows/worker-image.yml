@@ -1,0 +1,56 @@
+name: Publish collection worker image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/worker-image.yml
+      - .dockerignore
+      - requirements.txt
+      - workers/**
+      - '*.py'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install worker dependencies
+        run: python -m pip install -r workers/collection/requirements.txt
+
+      - name: Test worker code
+        run: |
+          python -m unittest discover -q
+          python -m unittest discover -s tests -q
+
+      - name: Log in to GHCR
+        uses: docker/login-action@f4ef78c080cd8ba55a85445d5b36e214a81df20a
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish image
+        id: publish
+        uses: docker/build-push-action@3b5e8027fcad23fda98b2e3ac259d8d67585f671
+        with:
+          context: .
+          file: workers/collection/Dockerfile
+          push: true
+          tags: ghcr.io/jtheisen/creational-collection-worker:sha-${{ github.sha }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+
+      - name: Record immutable image reference
+        run: echo "ghcr.io/jtheisen/creational-collection-worker@${{ steps.publish.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"

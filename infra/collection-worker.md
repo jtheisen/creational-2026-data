@@ -6,6 +6,14 @@ The root `.dockerignore` excludes downloaded dumps, local results, virtual
 environments, and private keys from the build context. Push the image to a
 registry accessible to the Container Apps environment.
 
+The [worker image workflow](../.github/workflows/worker-image.yml) tests the
+Python code and publishes `ghcr.io/jtheisen/creational-collection-worker`
+on worker-related pushes to `main` or by manual dispatch. Its tag includes the
+Git commit SHA; the workflow summary records the immutable image digest.
+GitHub initially creates a container package as private, so set the package's
+visibility to **Public** in its package settings before configuring the
+Container Apps Job for anonymous pulls.
+
 For this project, use a **public GitHub Container Registry (GHCR)** package
 such as `ghcr.io/<owner>/creational-collection-worker@sha256:<digest>`.
 This avoids a standing Azure Container Registry tier charge. Configure the

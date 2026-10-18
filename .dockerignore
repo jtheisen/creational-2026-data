@@ -4,6 +4,9 @@
 **/__pycache__
 **/*.pyc
 **/*.pem
+pat.txt
+.env
+.env.*
 data
 results
 benchmarks
