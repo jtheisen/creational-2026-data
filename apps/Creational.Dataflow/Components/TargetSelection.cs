@@ -18,6 +18,8 @@ public sealed class TargetSelection
 
     public void MarkSucceeded(TargetId id) => _selected.Remove(id);
 
+    public void Toggle(TargetId id) => Set(id, !Contains(id));
+
     public void Clear() => _selected.Clear();
 
     public IReadOnlyList<TargetId> ActionTargets(TargetId clicked) =>

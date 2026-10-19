@@ -1,5 +1,7 @@
-<MudThemeProvider />
+<MudThemeProvider Theme="_theme" />
 <MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
 <Router AppAssembly="typeof(Program).Assembly">
     <Found Context="routeData">
         <RouteView RouteData="routeData" />
@@ -10,3 +12,10 @@
         <p><a href="/">Return to collections</a></p>
     </NotFound>
 </Router>
+
+@code {
+    private readonly MudTheme _theme = new()
+    {
+        LayoutProperties = new LayoutProperties { DefaultBorderRadius = "12px" }
+    };
+}

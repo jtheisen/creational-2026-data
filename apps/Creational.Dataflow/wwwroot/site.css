@@ -1,0 +1,9 @@
+body { background: var(--mud-palette-background); }
+.table-scroll { overflow-x: auto; }
+.target-group-title { font-weight: 600; }
+.target-group-title small { margin-left: .5rem; opacity: .7; font-size: .8rem; font-weight: 400; }
+.activity { display: inline-flex; align-items: center; gap: .45rem; }
+.image-card { height: 100%; }
+.image-thumb { display: block; width: 100%; height: 190px; object-fit: contain; background: var(--mud-palette-background-grey); }
+.image-placeholder { display: grid; place-items: center; color: var(--mud-palette-text-secondary); }
+.image-filename { overflow-wrap: anywhere; }

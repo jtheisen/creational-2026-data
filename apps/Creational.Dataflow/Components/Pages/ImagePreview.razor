@@ -1,0 +1,159 @@
+@page "/images"
+@using Creational.Dataflow.Images
+@inject ImageCatalog Catalog
+@inject WikimediaImageInfo Metadata
+
+<MudStack Spacing="3">
+    <MudBreadcrumbs Items="_breadcrumbs" />
+    <MudText Typo="Typo.h4">Image preview</MudText>
+    <MudText Color="Color.Secondary">
+        Enter an OTT ID to inspect its descendant branch, or an English Wikipedia article URL.
+        OTT links are candidate exact-name matches, not confirmed taxon identities.
+    </MudText>
+    <MudPaper Class="pa-5" Elevation="1">
+        <MudStack Row="true" AlignItems="AlignItems.End" Spacing="2">
+            <MudTextField T="string" Label="OTT ID or Wikipedia article URL" @bind-Value="_input"
+                          Variant="Variant.Outlined" Placeholder="114168 or https://en.wikipedia.org/wiki/Gadus_morhua"
+                          FullWidth="true" />
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_loading" OnClick="SearchAsync">Preview</MudButton>
+        </MudStack>
+    </MudPaper>
+
+    @if (_loading)
+    {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+            <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+            <MudText>Preparing the catalog and resolving visible images…</MudText>
+        </MudStack>
+    }
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error">@_error</MudAlert>
+    }
+    @if (_page is not null)
+    {
+        <MudStack Row="true" Spacing="2">
+            <MudPaper Class="pa-4"><MudText Typo="Typo.h5">@_page.PageCount.ToString("N0")</MudText><MudText>Wikipedia pages</MudText></MudPaper>
+            <MudPaper Class="pa-4"><MudText Typo="Typo.h5">@_page.CandidateCount.ToString("N0")</MudText><MudText>candidate files</MudText></MudPaper>
+            <MudPaper Class="pa-4"><MudText Typo="Typo.h5">@_page.UnresolvedCount.ToString("N0")</MudText><MudText>unresolved references</MudText></MudPaper>
+        </MudStack>
+        @if (_page.UnresolvedCount > 0)
+        {
+            <MudAlert Severity="Severity.Info">Unresolved markup references are counted but cannot be shown as image files yet.</MudAlert>
+        }
+        @if (_metadataError is not null)
+        {
+            <MudAlert Severity="Severity.Warning">Thumbnail and license metadata could not be loaded: @_metadataError</MudAlert>
+        }
+        @if (_page.CandidateCount == 0)
+        {
+            <MudAlert Severity="Severity.Info">No resolvable image files were found for this selection.</MudAlert>
+        }
+        else
+        {
+            <MudGrid Spacing="2">
+                @foreach (var candidate in _page.Items)
+                {
+                    _metadata.TryGetValue(candidate.FileTitle, out var info);
+                    <MudItem xs="12" sm="6" md="4" lg="3" @key="candidate.FileTitle">
+                        <MudCard Class="image-card">
+                            @if (info?.ThumbnailUrl is { } thumbnail)
+                            {
+                                <img class="image-thumb" src="@thumbnail" alt="Preview of @candidate.FileTitle" loading="lazy" />
+                            }
+                            else
+                            {
+                                <div class="image-thumb image-placeholder">No thumbnail</div>
+                            }
+                            <MudCardContent>
+                                <MudText Typo="Typo.subtitle2" Class="image-filename">@candidate.FileTitle</MudText>
+                                <MudStack Row="true" Spacing="1" Class="my-2">
+                                    <MudChip T="string" Size="Size.Small" Color="@(info?.NeedsRightsReview == false ? Color.Primary : Color.Warning)">
+                                        @(info?.License ?? "Rights review")
+                                    </MudChip>
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@candidate.SourceKind</MudChip>
+                                </MudStack>
+                                @if (info?.Attribution is { } attribution)
+                                {
+                                    <MudText Typo="Typo.caption">@attribution</MudText>
+                                }
+                                @if (info?.OriginalBytes is { } bytes)
+                                {
+                                    <MudText Typo="Typo.caption">Original: @((bytes / 1048576.0).ToString("N1")) MiB</MudText>
+                                }
+                                <MudText Typo="Typo.caption">
+                                    From <a href="@ArticleUrl(candidate.ArticleTitle)" target="_blank" rel="noopener noreferrer">@candidate.ArticleTitle</a>
+                                    @if (info?.DescriptionUrl is { } description)
+                                    {
+                                        <span> · <a href="@description" target="_blank" rel="noopener noreferrer">File page</a></span>
+                                    }
+                                    @if (info?.LicenseUrl is { } licenseUrl)
+                                    {
+                                        <span> · <a href="@licenseUrl" target="_blank" rel="noopener noreferrer">License</a></span>
+                                    }
+                                </MudText>
+                            </MudCardContent>
+                        </MudCard>
+                    </MudItem>
+                }
+            </MudGrid>
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="mt-4">
+                <MudButton Variant="Variant.Outlined" Disabled="@(_loading || _pageNumber == 1)" OnClick="PreviousAsync">Previous</MudButton>
+                <MudText>Page @_pageNumber of @((int)Math.Ceiling(_page.CandidateCount / (double)PageSize))</MudText>
+                <MudButton Variant="Variant.Outlined" Disabled="@(_loading || _pageNumber * PageSize >= _page.CandidateCount)" OnClick="NextAsync">Next</MudButton>
+            </MudStack>
+        }
+    }
+</MudStack>
+
+@code {
+    private const int PageSize = 24;
+    private string _input = "";
+    private ImageSelection? _selection;
+    private ImageCatalogPage? _page;
+    private IReadOnlyDictionary<string, ImageMetadata> _metadata = new Dictionary<string, ImageMetadata>();
+    private string? _error;
+    private string? _metadataError;
+    private bool _loading;
+    private int _pageNumber = 1;
+    private readonly List<BreadcrumbItem> _breadcrumbs =
+        [new("Collections", "/"), new("Image preview", null, true)];
+
+    private async Task SearchAsync()
+    {
+        try
+        {
+            _selection = ImageSelection.Parse(_input);
+            _pageNumber = 1;
+            await LoadPageAsync();
+        }
+        catch (ArgumentException error) { _error = error.Message; }
+    }
+
+    private async Task PreviousAsync() { _pageNumber--; await LoadPageAsync(); }
+    private async Task NextAsync() { _pageNumber++; await LoadPageAsync(); }
+
+    private async Task LoadPageAsync()
+    {
+        if (_selection is null) return;
+        _loading = true;
+        _error = null;
+        _metadataError = null;
+        try
+        {
+            _page = await Catalog.QueryAsync(_selection, (_pageNumber - 1) * PageSize, PageSize, CancellationToken.None);
+            _metadata = new Dictionary<string, ImageMetadata>();
+            await InvokeAsync(StateHasChanged);
+            try
+            {
+                _metadata = await Metadata.ResolveAsync(_page.Items.Select(x => x.FileTitle).ToArray(), CancellationToken.None);
+            }
+            catch (Exception error) { _metadataError = error.Message; }
+        }
+        catch (Exception error) { _error = error.Message; _page = null; }
+        finally { _loading = false; }
+    }
+
+    private static string ArticleUrl(string title) =>
+        "https://en.wikipedia.org/wiki/" + Uri.EscapeDataString(title.Replace(' ', '_'));
+}

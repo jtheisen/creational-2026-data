@@ -6,77 +6,77 @@
 @inject Creational.Dataflow.Storage.ICollectionSettingsRepository Settings
 @inject TransferLedger Ledger
 
-<p><a href="/">← Collections</a></p>
-<h1>English Wikipedia · 2026-10-01</h1>
-<p>Mark an output group stale, inspect the resulting plan, then start the collection import. Image preview and import are planned but not yet available in this app.</p>
-
-<div class="actions">
-    <button type="button" @onclick="StartImport">Import collection</button>
-    <button type="button" class="secondary" @onclick="Refresh">Refresh now</button>
-</div>
-<div class="actions">
-    <label for="parallelism">Maximum concurrent targets</label>
-    <input id="parallelism" type="number" min="1" max="@Creational.Dataflow.Execution.CollectionParallelism.Maximum" step="1" @bind="_parallelismDraft" />
-    <button type="button" class="secondary" @onclick="SaveParallelism">Save limit</button>
-    <span>Saved limit: @_savedParallelism</span>
-</div>
-<p>This limits simultaneous targets. Import collection can still run all due targets in sequence.</p>
+<MudStack Spacing="3">
+<MudBreadcrumbs Items="_breadcrumbs" />
+<MudText Typo="Typo.h4">English Wikipedia · 2026-10-01</MudText>
+<MudText Color="Color.Secondary">Mark outputs stale, inspect the plan, or start a collection import. Image candidates can be explored in the separate preview.</MudText>
+<MudStack Row="true" Spacing="2">
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="StartImport">Import collection</MudButton>
+    <MudButton Variant="Variant.Outlined" OnClick="Refresh">Refresh now</MudButton>
+    <MudButton Variant="Variant.Text" Href="/images">Preview images</MudButton>
+</MudStack>
+<MudPaper Class="pa-4" Elevation="1">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+        <MudNumericField T="int" Label="Maximum concurrent targets" Min="1" Max="@Creational.Dataflow.Execution.CollectionParallelism.Maximum"
+                         Variant="Variant.Outlined" @bind-Value="_parallelismDraft" />
+        <MudButton Variant="Variant.Outlined" OnClick="SaveParallelism">Save limit</MudButton>
+        <MudText Color="Color.Secondary">Saved limit: @_savedParallelism</MudText>
+    </MudStack>
+    <MudText Typo="Typo.caption">This limits simultaneous targets. Import collection can still run all due targets in sequence.</MudText>
+</MudPaper>
 @if (!string.IsNullOrEmpty(_message))
 {
-    <p class="notice" role="status">@_message</p>
+    <MudAlert Severity="Severity.Success">@_message</MudAlert>
 }
 @if (!string.IsNullOrEmpty(_error))
 {
-    <p class="error" role="alert">@_error</p>
+    <MudAlert Severity="Severity.Error">@_error</MudAlert>
 }
 
 @if (_snapshot is null)
 {
-    <p>Loading targets…</p>
+    <MudProgressCircular Indeterminate="true" />
 }
 else
 {
-    <div class="summary">
+    <MudStack Row="true" Spacing="2">
         @foreach (var item in Enum.GetValues<TargetDisposition>())
         {
-            <div><strong>@_snapshot.Plan.Targets.Count(t => t.Disposition == item)</strong><span>@item</span></div>
+            <MudPaper Class="pa-4" Elevation="1">
+                <MudText Typo="Typo.h5">@_snapshot.Plan.Targets.Count(t => t.Disposition == item)</MudText>
+                <MudText Color="Color.Secondary">@item</MudText>
+            </MudPaper>
         }
-    </div>
+    </MudStack>
     @if (Coordinator.Snapshots().Count > 0)
     {
-        <section class="target-group">
-            <h2>Import runs</h2>
-            <table>
-                <thead><tr><th>Run</th><th>State</th><th>Started</th><th>Detail</th></tr></thead>
-                <tbody>
-                    @foreach (var run in Coordinator.Snapshots().Take(5))
-                    {
-                        <tr>
-                            <td>@run.RunId[..8]</td>
-                            <td>
-                                @if (run.State == "running")
-                                {
-                                    <span class="activity"><MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />@run.State</span>
-                                }
-                                else
-                                {
-                                    @run.State
-                                }
-                            </td>
-                            <td>@run.StartedAt.ToLocalTime()</td><td>@run.Error</td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
-        </section>
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudText Typo="Typo.h6">Import runs</MudText>
+            <div class="table-scroll">
+                <MudTable T="ImportRunSnapshot" Items="Coordinator.Snapshots().Take(5)" Dense="true" Elevation="0">
+                    <HeaderContent><MudTh>Run</MudTh><MudTh>State</MudTh><MudTh>Started</MudTh><MudTh>Detail</MudTh></HeaderContent>
+                    <RowTemplate Context="run">
+                        <MudTd>@run.RunId[..8]</MudTd>
+                        <MudTd>
+                            @if (run.State == "running")
+                            {
+                                <span class="activity"><MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />@run.State</span>
+                            }
+                            else { @run.State }
+                        </MudTd>
+                        <MudTd>@run.StartedAt.ToLocalTime()</MudTd><MudTd>@run.Error</MudTd>
+                    </RowTemplate>
+                </MudTable>
+            </div>
+        </MudPaper>
     }
-    <div class="actions" aria-live="polite">
-        <span>@_selection.Count selected</span>
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+        <MudText>@_selection.Count selected</MudText>
         @if (_selection.Count > 0)
         {
             <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="_selection.Clear" Disabled="_markingStale">Clear selection</MudButton>
         }
-    </div>
+    </MudStack>
     <MudExpansionPanels MultiExpansion="true" Dense="true" Elevation="0">
         @foreach (var group in CollectionPageModel.Groups(_snapshot.Plan))
         {
@@ -94,7 +94,8 @@ else
                 </TitleContent>
                 <ChildContent>
                     <div class="table-scroll">
-                        <MudTable T="PlannedTarget" Items="group.Targets" Dense="true" Hover="true" Elevation="0" Breakpoint="Breakpoint.None">
+                        <MudTable T="PlannedTarget" Items="group.Targets" Dense="true" Hover="true" Elevation="0" Breakpoint="Breakpoint.None"
+                                  OnRowClick="OnTargetRowClick">
                             <HeaderContent>
                                 <MudTh>Select</MudTh><MudTh>Target</MudTh><MudTh>Plan</MudTh><MudTh>Reason</MudTh>
                                 <MudTh>Last outcome</MudTh><MudTh>Output</MudTh><MudTh>Detail</MudTh><MudTh>Action</MudTh>
@@ -102,12 +103,14 @@ else
                             <RowTemplate Context="planned">
                                 @{ _snapshot.States.TryGetValue(planned.Id, out var state); }
                                 <MudTd>
-                                    <MudCheckBox T="bool" Dense="true" AriaLabel="@($"Select {planned.Id}")"
-                                                 Value="_selection.Contains(planned.Id)"
-                                                 ValueChanged="@(selected => SetSelected(planned.Id, selected))" />
+                                    <span @onclick:stopPropagation="true">
+                                        <MudCheckBox T="bool" Dense="true" AriaLabel="@($"Select {planned.Id}")"
+                                                     Value="_selection.Contains(planned.Id)"
+                                                     ValueChanged="@(selected => SetSelected(planned.Id, selected))" />
+                                    </span>
                                 </MudTd>
                                 <MudTd><strong>@planned.Id.Key</strong></MudTd>
-                                <MudTd><span class="status @planned.Disposition.ToString().ToLowerInvariant()">@planned.Disposition</span></MudTd>
+                                <MudTd><MudChip T="string" Size="Size.Small" Color="@DispositionColor(planned.Disposition)">@planned.Disposition</MudChip></MudTd>
                                 <MudTd>@planned.Reason</MudTd>
                                 <MudTd>
                                     @if (state?.Outcome is "queued" or "launching" or "running")
@@ -122,15 +125,17 @@ else
                                 <MudTd>
                                     @if (state?.ManifestPath is { Length: > 0 } marker)
                                     {
-                                        <a href="@marker" target="_blank" rel="noopener noreferrer">Output group</a>
+                                        <span @onclick:stopPropagation="true"><a href="@marker" target="_blank" rel="noopener noreferrer">Output group</a></span>
                                     }
                                 </MudTd>
                                 <MudTd>@(state?.Error ?? state?.StaleReason ?? "")</MudTd>
                                 <MudTd>
-                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_markingStale"
-                                               OnClick="@(() => MarkStale(planned.Id))">
-                                        @(_selection.Count > 0 ? $"Mark {_selection.Count} selected stale" : "Mark stale")
-                                    </MudButton>
+                                    <span @onclick:stopPropagation="true">
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_markingStale"
+                                                   OnClick="@(() => MarkStale(planned.Id))">
+                                            @(_selection.Count > 0 ? $"Mark {_selection.Count} selected stale" : "Mark stale")
+                                        </MudButton>
+                                    </span>
                                 </MudTd>
                             </RowTemplate>
                         </MudTable>
@@ -143,22 +148,20 @@ else
 
 @if (Ledger.All().Count > 0)
 {
-    <section class="target-group">
-        <h2>Live transfers</h2>
+    <MudPaper Class="pa-4" Elevation="1">
+        <MudText Typo="Typo.h6">Live transfers</MudText>
         <div class="table-scroll">
-            <table>
-                <thead><tr><th>Target</th><th>State</th><th>Bytes</th><th>Expected bytes</th><th>Detail</th></tr></thead>
-                <tbody>
-                    @foreach (var transfer in Ledger.All())
-                    {
-                        <tr><td>@transfer.Target</td><td>@transfer.State</td><td>@transfer.Bytes.ToString("N0")</td>
-                            <td>@transfer.ExpectedBytes?.ToString("N0")</td><td>@transfer.Error</td></tr>
-                    }
-                </tbody>
-            </table>
+            <MudTable T="TransferSnapshot" Items="Ledger.All()" Dense="true" Elevation="0">
+                <HeaderContent><MudTh>Target</MudTh><MudTh>State</MudTh><MudTh>Bytes</MudTh><MudTh>Expected bytes</MudTh><MudTh>Detail</MudTh></HeaderContent>
+                <RowTemplate Context="transfer">
+                    <MudTd>@transfer.Target</MudTd><MudTd>@transfer.State</MudTd>
+                    <MudTd>@transfer.Bytes.ToString("N0")</MudTd><MudTd>@transfer.ExpectedBytes?.ToString("N0")</MudTd><MudTd>@transfer.Error</MudTd>
+                </RowTemplate>
+            </MudTable>
         </div>
-    </section>
+    </MudPaper>
 }
+</MudStack>
 
 @code {
     private CollectionPlanSnapshot? _snapshot;
@@ -168,6 +171,8 @@ else
     private int _savedParallelism = Creational.Dataflow.Execution.CollectionParallelism.Default;
     private readonly TargetSelection _selection = new();
     private readonly HashSet<string> _expandedGroups = [];
+    private readonly List<BreadcrumbItem> _breadcrumbs =
+        [new("Collections", "/"), new("English Wikipedia", null, true)];
     private bool _markingStale;
     private readonly CancellationTokenSource _refreshStop = new();
     private Task? _refreshTask;
@@ -237,11 +242,25 @@ else
 
     private void SetSelected(TargetId id, bool selected) => _selection.Set(id, selected);
 
+    private void OnTargetRowClick(TableRowClickEventArgs<PlannedTarget> args)
+    {
+        if (args.Item is { } item) _selection.Toggle(item.Id);
+    }
+
     private void SetExpanded(string kind, bool expanded)
     {
         if (expanded) _expandedGroups.Add(kind);
         else _expandedGroups.Remove(kind);
     }
+
+    private static Color DispositionColor(TargetDisposition disposition) => disposition switch
+    {
+        TargetDisposition.Current => Color.Success,
+        TargetDisposition.Run => Color.Warning,
+        TargetDisposition.Blocked => Color.Info,
+        TargetDisposition.Failed => Color.Error,
+        _ => Color.Default
+    };
 
     private async Task SaveParallelism()
     {

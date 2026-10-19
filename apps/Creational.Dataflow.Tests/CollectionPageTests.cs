@@ -27,6 +27,22 @@ public class CollectionPageTests
     }
 
     [Fact]
+    public void ClickingRowTogglesTheSameSelectionUsedByBulkStale()
+    {
+        var id = new TargetId(October2026Collection.Collection, "parse-shard", "p1");
+        var other = new TargetId(October2026Collection.Collection, "ott-names", "all");
+        var selection = new TargetSelection();
+
+        selection.Toggle(id);
+        Assert.True(selection.Contains(id));
+        Assert.Equal([id], selection.ActionTargets(other));
+
+        selection.Toggle(new TargetId(id.Collection, id.Kind, id.Key));
+        Assert.False(selection.Contains(id));
+        Assert.Equal([other], selection.ActionTargets(other));
+    }
+
+    [Fact]
     public void GroupsTargetsAndCountsTheirPlanStates()
     {
         var collection = October2026Collection.Collection;

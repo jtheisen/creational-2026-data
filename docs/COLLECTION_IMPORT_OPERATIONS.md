@@ -4,8 +4,9 @@ The dataflow app lives in `apps/Creational.Dataflow`. It is a .NET 10 Blazor
 Server control plane for the pinned `enwiki/2026-10-01` collection. The app
 lists target groups, explains why each is current or would run, lets an operator
 mark a group stale, and starts the import. The collection graph ends with OTT
-3.3 conversion and the investigative OTT–Wikipedia correlation. Image previews
-and downloads remain a later pipeline.
+3.3 conversion and the investigative OTT–Wikipedia correlation. The image
+preview reads those outputs but does not copy originals; see
+[image preview operations](IMAGE_PREVIEW_OPERATIONS.md).
 
 The dashboard plan uses the last verified Table state for a quick preview.
 Import rechecks the referenced Blob groups before it queues any work. This is

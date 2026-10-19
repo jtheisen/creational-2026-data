@@ -3,7 +3,9 @@
 Recorded: 2026-10-15; updated 2026-10-17. Status: the import and one-pass
 candidate pool have been proven on a VM, and local taxobox parsing has been
 completed. The collection control-plane and worker code now exists under
-`apps/` and `workers/`; deployment and live orchestration validation remain.
+`apps/` and `workers/`. The image preview now uses a compact OTT hierarchy
+catalog, parsed image references, and Wikimedia imageinfo metadata; original
+image import remains future work.
 
 The collection target graph, adoption workflow, App Service copier, queue
 dispatcher, Container Apps worker contract, and dashboard are described in
@@ -22,8 +24,9 @@ breeds, cultivars, common-name groups, and lists needs further investigation.
 
 The October 2026 dump is already mirrored to Blob Storage. A one-pass
 candidate pool and local raw-taxobox/image-reference tables have been produced.
-Rendered text, taxonomy resolution, and image-file resolution still need
-investigation before the full pipeline is automated.
+Rendered text and accepted taxon identity still need investigation. Image
+file resolution is implemented for the visible preview page, while original
+image copying and full pipeline automation remain future work.
 
 ## Agreed Azure architecture
 

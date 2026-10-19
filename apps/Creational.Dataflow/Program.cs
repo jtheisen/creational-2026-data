@@ -7,6 +7,7 @@ using Azure.Storage.Queues;
 using Azure.Storage.Queues.Models;
 using Creational.Dataflow.Components;
 using Creational.Dataflow.Execution;
+using Creational.Dataflow.Images;
 using Creational.Dataflow.Storage;
 using Creational.Dataflow.Targets;
 using Creational.Dataflow.Transfers;
@@ -17,6 +18,13 @@ var accountUrl = Environment.GetEnvironmentVariable("CREATIONAL_STORAGE_ACCOUNT_
 var credential = new DefaultAzureCredential();
 var blobService = new BlobServiceClient(new Uri(accountUrl), credential);
 var blobStore = new AzureBlobStore(blobService);
+
+if (args.Length == 3 && args[0] == "--build-ott-edges")
+{
+    await OttEdges.BuildAsync(args[1], args[2], CancellationToken.None);
+    Console.WriteLine($"Wrote {args[2]}");
+    return;
+}
 
 if (args.Length == 2 && args[0] == "--adopt-existing" && args[1] is "--verify-only" or "--apply")
 {
@@ -53,6 +61,7 @@ builder.Services.AddSingleton(webTableService.GetTableClient("CollectionTargets"
 builder.Services.AddSingleton<ITargetRepository, TableTargetRepository>();
 builder.Services.AddSingleton<ICollectionSettingsRepository, TableCollectionSettingsRepository>();
 builder.Services.AddSingleton<IOutputManifestReader, AzureOutputManifestReader>();
+builder.Services.AddSingleton<ImageCatalog>();
 builder.Services.AddSingleton(sp => new WorkInputBuilder(sp.GetRequiredService<IOutputManifestReader>(),
     webShards, blobStore));
 var queueUrl = accountUrl.Replace(".blob.", ".queue.", StringComparison.OrdinalIgnoreCase) + "/collection-work";
@@ -62,6 +71,8 @@ builder.Services.AddSingleton(queueClient);
 builder.Services.AddSingleton<TransferLedger>();
 builder.Services.AddSingleton<IBlockBlobWriter, AzureBlockBlobWriter>();
 var copyUserAgent = builder.Configuration["Copies:UserAgent"];
+builder.Services.AddSingleton(_ => new WikimediaImageInfo(new HttpClient(), copyUserAgent ??
+    "CreationalDataflow/1.0 (https://github.com/jtheisen/creational-2026-data)"));
 builder.Services.AddSingleton<IStreamingCopier>(sp =>
 {
     if (string.IsNullOrWhiteSpace(copyUserAgent))

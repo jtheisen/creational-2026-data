@@ -1,8 +1,16 @@
 @page "/"
 
-<h1>Collections</h1>
-<p>The initial collection is pinned to the 1 October 2026 English Wikipedia current-content dump.</p>
-<a class="collection-card" href="/collections/enwiki-2026-10-01">
-    <strong>English Wikipedia · 2026-10-01</strong>
-    <span>Dump shards → candidate pool → taxobox tables → OTT correlation</span>
-</a>
+<MudStack Spacing="3">
+    <MudText Typo="Typo.h4">Collections</MudText>
+    <MudText>The initial collection is pinned to the 1 October 2026 English Wikipedia current-content dump.</MudText>
+    <MudCard Elevation="1">
+        <MudCardContent>
+            <MudText Typo="Typo.h6">English Wikipedia · 2026-10-01</MudText>
+            <MudText Color="Color.Secondary">Dump shards → candidate pool → taxobox tables → OTT correlation</MudText>
+        </MudCardContent>
+        <MudCardActions>
+            <MudButton Href="/collections/enwiki-2026-10-01" Color="Color.Primary">Open collection</MudButton>
+            <MudButton Href="/images" Color="Color.Primary">Preview images</MudButton>
+        </MudCardActions>
+    </MudCard>
+</MudStack>
