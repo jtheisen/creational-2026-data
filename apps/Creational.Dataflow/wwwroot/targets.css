@@ -1,0 +1,4 @@
+.target-group-title { font-weight: 600; }
+.target-group-title small { margin-left: .5rem; color: #65766e; font-size: .8rem; font-weight: 400; }
+button.mud-button-outlined, button.mud-button-text { background: transparent; }
+button.mud-button-outlined:hover, button.mud-button-text:hover { background: var(--mud-palette-action-default-hover); }

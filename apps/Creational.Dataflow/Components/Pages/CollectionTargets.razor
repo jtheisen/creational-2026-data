@@ -70,24 +70,75 @@ else
             </table>
         </section>
     }
-    @foreach (var group in CollectionPageModel.Groups(_snapshot.Plan))
-    {
-        <details class="target-group" open="@(group.Targets.Count == 1)">
-            <summary>@group.Kind <small>@group.Targets.Count targets</small></summary>
-            <div class="table-scroll">
-                <table>
-                    <thead><tr><th>Target</th><th>Plan</th><th>Reason</th><th>Last outcome</th><th>Output</th><th>Detail</th><th>Action</th></tr></thead>
-                    <tbody>
-                        @foreach (var planned in group.Targets)
+    <div class="actions" aria-live="polite">
+        <span>@_selection.Count selected</span>
+        @if (_selection.Count > 0)
+        {
+            <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="_selection.Clear" Disabled="_markingStale">Clear selection</MudButton>
+        }
+    </div>
+    <MudExpansionPanels MultiExpansion="true" Dense="true" Elevation="0">
+        @foreach (var group in CollectionPageModel.Groups(_snapshot.Plan))
+        {
+            var groupKind = group.Kind;
+            var selectedInGroup = group.Targets.Count(t => _selection.Contains(t.Id));
+            <MudExpansionPanel @key="groupKind" Expanded="_expandedGroups.Contains(groupKind)"
+                               ExpandedChanged="@(expanded => SetExpanded(groupKind, expanded))">
+                <TitleContent>
+                    <span class="target-group-title">@groupKind <small>@group.Targets.Count targets</small>
+                        @if (selectedInGroup > 0)
                         {
-                            _snapshot.States.TryGetValue(planned.Id, out var state);
-                            <TargetRow Planned="planned" State="state" OnMarkStale="MarkStale" />
+                            <small>· @selectedInGroup selected</small>
                         }
-                    </tbody>
-                </table>
-            </div>
-        </details>
-    }
+                    </span>
+                </TitleContent>
+                <ChildContent>
+                    <div class="table-scroll">
+                        <MudTable T="PlannedTarget" Items="group.Targets" Dense="true" Hover="true" Elevation="0" Breakpoint="Breakpoint.None">
+                            <HeaderContent>
+                                <MudTh>Select</MudTh><MudTh>Target</MudTh><MudTh>Plan</MudTh><MudTh>Reason</MudTh>
+                                <MudTh>Last outcome</MudTh><MudTh>Output</MudTh><MudTh>Detail</MudTh><MudTh>Action</MudTh>
+                            </HeaderContent>
+                            <RowTemplate Context="planned">
+                                @{ _snapshot.States.TryGetValue(planned.Id, out var state); }
+                                <MudTd>
+                                    <MudCheckBox T="bool" Dense="true" AriaLabel="@($"Select {planned.Id}")"
+                                                 Value="_selection.Contains(planned.Id)"
+                                                 ValueChanged="@(selected => SetSelected(planned.Id, selected))" />
+                                </MudTd>
+                                <MudTd><strong>@planned.Id.Key</strong></MudTd>
+                                <MudTd><span class="status @planned.Disposition.ToString().ToLowerInvariant()">@planned.Disposition</span></MudTd>
+                                <MudTd>@planned.Reason</MudTd>
+                                <MudTd>
+                                    @if (state?.Outcome is "queued" or "launching" or "running")
+                                    {
+                                        <span class="activity"><MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />@state.Outcome</span>
+                                    }
+                                    else
+                                    {
+                                        @(state?.Outcome ?? "missing")
+                                    }
+                                </MudTd>
+                                <MudTd>
+                                    @if (state?.ManifestPath is { Length: > 0 } marker)
+                                    {
+                                        <a href="@marker" target="_blank" rel="noopener noreferrer">Output group</a>
+                                    }
+                                </MudTd>
+                                <MudTd>@(state?.Error ?? state?.StaleReason ?? "")</MudTd>
+                                <MudTd>
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_markingStale"
+                                               OnClick="@(() => MarkStale(planned.Id))">
+                                        @(_selection.Count > 0 ? $"Mark {_selection.Count} selected stale" : "Mark stale")
+                                    </MudButton>
+                                </MudTd>
+                            </RowTemplate>
+                        </MudTable>
+                    </div>
+                </ChildContent>
+            </MudExpansionPanel>
+        }
+    </MudExpansionPanels>
 }
 
 @if (Ledger.All().Count > 0)
@@ -115,6 +166,9 @@ else
     private string? _error;
     private int _parallelismDraft = Creational.Dataflow.Execution.CollectionParallelism.Default;
     private int _savedParallelism = Creational.Dataflow.Execution.CollectionParallelism.Default;
+    private readonly TargetSelection _selection = new();
+    private readonly HashSet<string> _expandedGroups = [];
+    private bool _markingStale;
     private readonly CancellationTokenSource _refreshStop = new();
     private Task? _refreshTask;
 
@@ -153,13 +207,40 @@ else
 
     private async Task MarkStale(TargetId id)
     {
+        if (_markingStale) return;
+        _markingStale = true;
+        var targets = _selection.ActionTargets(id);
+        var failures = new List<string>();
+        var succeeded = 0;
         try
         {
-            await Repository.MarkStaleAsync(id, "Marked in dashboard", _refreshStop.Token);
-            _message = $"Marked {id} stale. The plan below shows what would run.";
+            foreach (var target in targets)
+            {
+                try
+                {
+                    await Repository.MarkStaleAsync(target, "Marked in dashboard", _refreshStop.Token);
+                    _selection.MarkSucceeded(target);
+                    succeeded++;
+                }
+                catch (Exception error) when (error is not OperationCanceledException)
+                {
+                    failures.Add($"{target}: {error.Message}");
+                }
+            }
+            _message = succeeded > 0 ? $"Marked {succeeded} target(s) stale. The plan below shows what would run." : null;
             await Refresh();
+            if (failures.Count > 0) _error = $"Could not mark {failures.Count} target(s) stale: {string.Join("; ", failures)}";
         }
         catch (Exception error) { _error = error.Message; }
+        finally { _markingStale = false; }
+    }
+
+    private void SetSelected(TargetId id, bool selected) => _selection.Set(id, selected);
+
+    private void SetExpanded(string kind, bool expanded)
+    {
+        if (expanded) _expandedGroups.Add(kind);
+        else _expandedGroups.Remove(kind);
     }
 
     private async Task SaveParallelism()

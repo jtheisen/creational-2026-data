@@ -7,6 +7,26 @@ namespace Creational.Dataflow.Tests;
 public class CollectionPageTests
 {
     [Fact]
+    public void CheckedTargetsTakePrecedenceOverClickedRowAndSurviveRecreatedIds()
+    {
+        var collection = October2026Collection.Collection;
+        var first = new TargetId(collection, "parse-shard", "p1");
+        var second = new TargetId(collection, "parse-shard", "p2");
+        var clicked = new TargetId(collection, "ott-names", "all");
+        var selection = new TargetSelection();
+        selection.Set(first, true);
+        selection.Set(second, true);
+
+        Assert.True(selection.Contains(new TargetId(collection, "parse-shard", "p1")));
+        Assert.Equal([first, second], selection.ActionTargets(clicked));
+
+        selection.MarkSucceeded(first);
+        Assert.Equal([second], selection.ActionTargets(clicked));
+        selection.MarkSucceeded(second);
+        Assert.Equal([clicked], selection.ActionTargets(clicked));
+    }
+
+    [Fact]
     public void GroupsTargetsAndCountsTheirPlanStates()
     {
         var collection = October2026Collection.Collection;
