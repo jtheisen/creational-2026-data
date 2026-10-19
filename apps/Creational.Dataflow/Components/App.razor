@@ -3,8 +3,10 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <base href="/" />
     <title>Creational dataflow</title>
-    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="/_content/MudBlazor/MudBlazor.min.css" />
+    <link rel="stylesheet" href="/app.css" />
     <HeadOutlet @rendermode="InteractiveServer" />
 </head>
 <body>
@@ -15,6 +17,7 @@
     <main class="shell-main">
         <Routes @rendermode="InteractiveServer" />
     </main>
-    <script src="_framework/blazor.web.js"></script>
+    <script src="/_content/MudBlazor/MudBlazor.min.js"></script>
+    <script src="/_framework/blazor.web.js"></script>
 </body>
 </html>

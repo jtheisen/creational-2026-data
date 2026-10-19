@@ -2,7 +2,16 @@
     <td><strong>@Planned.Id.Key</strong></td>
     <td><span class="status @Planned.Disposition.ToString().ToLowerInvariant()">@Planned.Disposition</span></td>
     <td>@Planned.Reason</td>
-    <td>@(State?.Outcome ?? "missing")</td>
+    <td>
+        @if (State?.Outcome is "queued" or "launching" or "running")
+        {
+            <span class="activity"><MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />@State.Outcome</span>
+        }
+        else
+        {
+            @(State?.Outcome ?? "missing")
+        }
+    </td>
     <td>
         @if (State?.ManifestPath is { Length: > 0 } marker)
         {

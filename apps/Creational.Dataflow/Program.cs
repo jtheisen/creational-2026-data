@@ -10,6 +10,7 @@ using Creational.Dataflow.Execution;
 using Creational.Dataflow.Storage;
 using Creational.Dataflow.Targets;
 using Creational.Dataflow.Transfers;
+using MudBlazor.Services;
 
 var accountUrl = Environment.GetEnvironmentVariable("CREATIONAL_STORAGE_ACCOUNT_URL")
     ?? "https://creational.blob.core.windows.net";
@@ -37,6 +38,7 @@ if (args.Length == 2 && args[0] == "--adopt-existing" && args[1] is "--verify-on
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+builder.Services.AddMudServices();
 builder.Services.AddSingleton<TokenCredential>(credential);
 builder.Services.AddSingleton(blobService);
 builder.Services.AddSingleton(blobStore);

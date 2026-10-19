@@ -51,7 +51,20 @@ else
                 <tbody>
                     @foreach (var run in Coordinator.Snapshots().Take(5))
                     {
-                        <tr><td>@run.RunId[..8]</td><td>@run.State</td><td>@run.StartedAt.ToLocalTime()</td><td>@run.Error</td></tr>
+                        <tr>
+                            <td>@run.RunId[..8]</td>
+                            <td>
+                                @if (run.State == "running")
+                                {
+                                    <span class="activity"><MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />@run.State</span>
+                                }
+                                else
+                                {
+                                    @run.State
+                                }
+                            </td>
+                            <td>@run.StartedAt.ToLocalTime()</td><td>@run.Error</td>
+                        </tr>
                     }
                 </tbody>
             </table>
