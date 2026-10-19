@@ -95,6 +95,10 @@ public class ExistingAssetAdopterTests
             throw new UnauthorizedAccessException();
         public Task<TargetState> MarkStaleAsync(TargetId id, string reason, CancellationToken ct) => throw new UnauthorizedAccessException();
         public Task<TargetState> BeginAttemptAsync(TargetId id, string attemptId, long revision, CancellationToken ct) => throw new UnauthorizedAccessException();
+        public Task<TargetState> QueueAttemptAsync(TargetId id, string attemptId, long revision, string input, CancellationToken ct) => throw new UnauthorizedAccessException();
+        public Task<TargetState> NoteEnqueuedAsync(TargetId id, string attemptId, CancellationToken ct) => throw new UnauthorizedAccessException();
+        public Task<TargetState> BeginLaunchAsync(TargetId id, string attemptId, CancellationToken ct) => throw new UnauthorizedAccessException();
+        public Task<TargetState> MarkLaunchUncertainAsync(TargetId id, string attemptId, CancellationToken ct) => throw new UnauthorizedAccessException();
         public Task<TargetState> AttachExecutionAsync(TargetId id, string attemptId, string execution, CancellationToken ct) => throw new UnauthorizedAccessException();
         public Task<TargetState> CompleteAttemptAsync(TargetId id, string attemptId, long revision, string marker,
             string fingerprint, string recipe, IReadOnlyDictionary<string, string> inputs, CancellationToken ct,
@@ -138,6 +142,14 @@ public class ExistingAssetAdopterTests
         public Task<TargetState> MarkStaleAsync(TargetId id, string reason, CancellationToken ct) => Set(id, Get(id).MarkStale(reason));
         public Task<TargetState> BeginAttemptAsync(TargetId id, string attemptId, long revision, CancellationToken ct) =>
             Set(id, Get(id).BeginAttempt(attemptId, revision));
+        public Task<TargetState> QueueAttemptAsync(TargetId id, string attemptId, long revision, string input, CancellationToken ct) =>
+            Set(id, Get(id).QueueAttempt(attemptId, revision, input));
+        public Task<TargetState> NoteEnqueuedAsync(TargetId id, string attemptId, CancellationToken ct) =>
+            Set(id, Get(id).NoteEnqueued(attemptId));
+        public Task<TargetState> BeginLaunchAsync(TargetId id, string attemptId, CancellationToken ct) =>
+            Set(id, Get(id).BeginLaunch(attemptId));
+        public Task<TargetState> MarkLaunchUncertainAsync(TargetId id, string attemptId, CancellationToken ct) =>
+            Set(id, Get(id).MarkLaunchUncertain(attemptId));
         public Task<TargetState> AttachExecutionAsync(TargetId id, string attemptId, string executionId, CancellationToken ct) =>
             Set(id, Get(id).AttachExecution(attemptId, executionId));
         public Task<TargetState> CompleteAttemptAsync(TargetId id, string attemptId, long revision,

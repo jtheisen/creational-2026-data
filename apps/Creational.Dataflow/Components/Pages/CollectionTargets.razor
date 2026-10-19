@@ -8,7 +8,7 @@
 
 <p><a href="/">← Collections</a></p>
 <h1>English Wikipedia · 2026-10-01</h1>
-<p>Mark an output group stale, inspect the resulting plan, then start the collection import. Image downloads are managed separately.</p>
+<p>Mark an output group stale, inspect the resulting plan, then start the collection import. Image preview and import are planned but not yet available in this app.</p>
 
 <div class="actions">
     <button type="button" @onclick="StartImport">Import collection</button>
@@ -59,8 +59,8 @@ else
     }
     @foreach (var group in CollectionPageModel.Groups(_snapshot.Plan))
     {
-        <section class="target-group">
-            <h2>@group.Kind <small>@group.Targets.Count targets</small></h2>
+        <details class="target-group" open="@(group.Targets.Count == 1)">
+            <summary>@group.Kind <small>@group.Targets.Count targets</small></summary>
             <div class="table-scroll">
                 <table>
                     <thead><tr><th>Target</th><th>Plan</th><th>Reason</th><th>Last outcome</th><th>Output</th><th>Detail</th><th>Action</th></tr></thead>
@@ -73,7 +73,7 @@ else
                     </tbody>
                 </table>
             </div>
-        </section>
+        </details>
     }
 }
 

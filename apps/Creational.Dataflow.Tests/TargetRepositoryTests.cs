@@ -31,7 +31,7 @@ public class TargetRepositoryTests
     [Fact]
     public void DuplicateOrWrongAttemptCannotComplete()
     {
-        var state = TargetState.Empty(Id).BeginAttempt("attempt-1", 0);
+        var state = TargetState.Empty(Id).QueueAttempt("attempt-1", 0, "inputs").BeginLaunch("attempt-1");
         Assert.Throws<InvalidOperationException>(() => state.CompleteAttempt("attempt-2", 0, "m", "f", "v", new Dictionary<string, string>()));
         state = state.CompleteAttempt("attempt-1", 0, "m", "f", "v", new Dictionary<string, string>());
         Assert.Throws<InvalidOperationException>(() => state.CompleteAttempt("attempt-1", 0, "m", "f", "v", new Dictionary<string, string>()));
@@ -47,10 +47,28 @@ public class TargetRepositoryTests
     [Fact]
     public void ExecutionCanOnlyAttachToClaimedAttempt()
     {
-        var state = TargetState.Empty(Id).BeginAttempt("attempt-1", 0);
+        var state = TargetState.Empty(Id).QueueAttempt("attempt-1", 0, "inputs").BeginLaunch("attempt-1");
         Assert.Throws<InvalidOperationException>(() => state.AttachExecution("attempt-2", "execution-1"));
         state = state.AttachExecution("attempt-1", "execution-1");
         Assert.Equal("execution-1", state.ExecutionId);
+    }
+
+    [Fact]
+    public void QueuedAndUncertainLaunchRemainDurableUntilResolved()
+    {
+        var state = TargetState.Empty(Id).QueueAttempt("attempt-1", 0, "inputs");
+        Assert.Equal("queued", state.Outcome);
+        Assert.Equal("inputs", state.InputManifestUri);
+        Assert.Throws<InvalidOperationException>(() => state.QueueAttempt("attempt-2", 0, "other"));
+
+        state = state.NoteEnqueued("attempt-1").BeginLaunch("attempt-1").MarkLaunchUncertain("attempt-1");
+        Assert.Equal("launch-uncertain", state.Outcome);
+        Assert.NotNull(state.AttemptId);
+        Assert.NotNull(state.LastEnqueuedAt);
+
+        state = state.AttachExecution("attempt-1", "execution-1");
+        Assert.Equal("running", state.Outcome);
+        Assert.Null(state.Error);
     }
 
     [Fact]

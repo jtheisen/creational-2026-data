@@ -31,6 +31,18 @@ public sealed class TableTargetRepository(TableClient table) : ITargetRepository
     public Task<TargetState> BeginAttemptAsync(TargetId id, string attemptId, long expectedStaleRevision, CancellationToken cancellationToken) =>
         MutateAsync(id, state => state.BeginAttempt(attemptId, expectedStaleRevision), cancellationToken);
 
+    public Task<TargetState> QueueAttemptAsync(TargetId id, string attemptId, long expectedStaleRevision, string inputManifestUri, CancellationToken cancellationToken) =>
+        MutateAsync(id, state => state.QueueAttempt(attemptId, expectedStaleRevision, inputManifestUri), cancellationToken);
+
+    public Task<TargetState> NoteEnqueuedAsync(TargetId id, string attemptId, CancellationToken cancellationToken) =>
+        MutateAsync(id, state => state.NoteEnqueued(attemptId), cancellationToken);
+
+    public Task<TargetState> BeginLaunchAsync(TargetId id, string attemptId, CancellationToken cancellationToken) =>
+        MutateAsync(id, state => state.BeginLaunch(attemptId), cancellationToken);
+
+    public Task<TargetState> MarkLaunchUncertainAsync(TargetId id, string attemptId, CancellationToken cancellationToken) =>
+        MutateAsync(id, state => state.MarkLaunchUncertain(attemptId), cancellationToken);
+
     public Task<TargetState> AttachExecutionAsync(TargetId id, string attemptId, string executionId, CancellationToken cancellationToken) =>
         MutateAsync(id, state => state.AttachExecution(attemptId, executionId), cancellationToken);
 
@@ -79,6 +91,8 @@ public sealed class TableTargetRepository(TableClient table) : ITargetRepository
         ["AttemptStartedAt"] = state.AttemptStartedAt?.ToString("O") ?? "",
         ["ExecutionId"] = state.ExecutionId ?? "",
         ["LastAttemptId"] = state.LastAttemptId ?? "",
+        ["InputManifestUri"] = state.InputManifestUri ?? "",
+        ["LastEnqueuedAt"] = state.LastEnqueuedAt?.ToString("O") ?? "",
         ["ManifestPath"] = state.ManifestPath ?? "",
         ["Fingerprint"] = state.Fingerprint ?? "",
         ["RecipeVersion"] = state.RecipeVersion ?? "",
@@ -101,7 +115,9 @@ public sealed class TableTargetRepository(TableClient table) : ITargetRepository
         {
             AttemptStartedAt = started is null ? null : DateTimeOffset.Parse(started),
             ExecutionId = Optional("ExecutionId"),
-            LastAttemptId = Optional("LastAttemptId")
+            LastAttemptId = Optional("LastAttemptId"),
+            InputManifestUri = Optional("InputManifestUri"),
+            LastEnqueuedAt = Optional("LastEnqueuedAt") is { } enqueued ? DateTimeOffset.Parse(enqueued) : null
         };
     }
 }

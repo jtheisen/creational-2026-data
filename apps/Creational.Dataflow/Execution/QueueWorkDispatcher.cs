@@ -51,32 +51,20 @@ public sealed class QueueWorkDispatcher(QueueClient queue, ITargetRepository rep
     public static async Task<bool> ProcessAsync(QueueWorkItem item, ITargetRepository repository,
         IComputeJobLauncher launcher, CancellationToken ct)
     {
-        var claimed = false;
-        for (var retry = 0; retry < 5; retry++)
-        {
-            var states = await repository.GetCollectionAsync(item.Target.Collection, ct);
-            var current = states.TryGetValue(item.Target, out var state) ? state : TargetState.Empty(item.Target);
-            if (current.AttemptId is not null || current.LastAttemptId == item.AttemptId) return false;
-            try
-            {
-                await repository.BeginAttemptAsync(item.Target, item.AttemptId, current.StaleRevision, ct);
-                claimed = true;
-                break;
-            }
-            catch (InvalidOperationException) { }
-        }
-        if (!claimed) throw new InvalidOperationException($"Could not claim queued target {item.Target} after stale revision races");
-        try
-        {
-            var execution = await launcher.StartAsync(item.Target, item.InputManifestUri,
-                item.OutputPrefix, item.RecipeVersion, ct);
-            await repository.AttachExecutionAsync(item.Target, item.AttemptId, execution, ct);
-            return true;
-        }
-        catch (Exception error)
-        {
-            await repository.FailAttemptAsync(item.Target, item.AttemptId, error.Message, ct);
-            throw;
-        }
+        var states = await repository.GetCollectionAsync(item.Target.Collection, ct);
+        if (!states.TryGetValue(item.Target, out var current) || current.AttemptId != item.AttemptId ||
+            current.Outcome != "queued") return false;
+        if (current.AttemptRevision != item.StaleRevision || current.InputManifestUri != item.InputManifestUri ||
+            item.OutputPrefix != CollectionImportEngine.AttemptOutputPrefix(item.Target, item.AttemptId))
+            throw new InvalidDataException($"Queue message does not match persisted attempt {item.AttemptId}");
+        try { await repository.BeginLaunchAsync(item.Target, item.AttemptId, ct); }
+        catch (InvalidOperationException) { return false; } // Another dispatcher won the ETag race.
+
+        // Once the launch is claimed, an HTTP failure can mean Azure accepted the start.
+        // Never start it again from a redelivered message without resolving that ambiguity.
+        var execution = await launcher.StartAsync(item.Target, item.InputManifestUri,
+            item.OutputPrefix, item.RecipeVersion, ct);
+        await repository.AttachExecutionAsync(item.Target, item.AttemptId, execution, ct);
+        return true;
     }
 }

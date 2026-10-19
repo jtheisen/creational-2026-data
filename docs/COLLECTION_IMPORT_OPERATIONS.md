@@ -81,7 +81,21 @@ ID and soft-delete that exact previous version.
 Compute targets are queued to `collection-work`; the App Service dispatcher
 starts a Manual Container Apps Job execution for each target. The worker exits
 nonzero on failure and publishes its marker only after artifact uploads.
-The coordinator also checks platform execution status to catch failures the
+An independent hosted reconciler checks persisted Table attempts at startup
+and every 15 seconds, even when no collection import is active. It requeues
+queued attempts whose message may have been lost, checks platform executions,
+and verifies worker completion markers. The dispatcher atomically claims a
+queued attempt before requesting an Azure execution, so duplicate queue
+messages cannot launch duplicate jobs. If the start response or Table update
+is lost, the target stays in `launch-uncertain` rather than blindly launching
+again. A valid completion marker can resolve it automatically; otherwise an
+operator must inspect Container Apps executions before deciding whether to
+retry. An App Service restart does not currently resume collection-wide
+planning: persisting the import run intent and resuming scheduling is deferred.
+Enable **Always On** for the App Service so the queue dispatcher and reconciler
+keep running while the dashboard is idle; they still resume from Table state
+after a process restart.
+The reconciler also checks platform execution status to catch failures the
 Python process could not write to Tables. A failed target leaves prior verified
 outputs available and blocks dependents for that run. A later Import retries it.
 The dashboard stores a collection-wide limit of 1–5 outstanding targets in a

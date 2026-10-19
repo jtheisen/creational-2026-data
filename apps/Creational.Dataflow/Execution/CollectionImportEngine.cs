@@ -88,7 +88,6 @@ public sealed class CollectionImportEngine(
         for (;;)
         {
             ct.ThrowIfCancellationRequested();
-            await ReconcileAsync(runId, ct);
             foreach (var (id, task) in copyTasks.Where(kv => kv.Value.IsCompleted).ToArray())
             {
                 await task;
@@ -125,7 +124,10 @@ public sealed class CollectionImportEngine(
                     var outputPrefix = AttemptOutputPrefix(planned.Id, attempt);
                     var revision = state?.StaleRevision ?? 0;
                     var item = new QueueWorkItem(planned.Id, attempt, revision, inputUri, outputPrefix, definition.RecipeVersion);
+                    await repository.QueueAttemptAsync(planned.Id, attempt, revision, inputUri, ct);
                     await queue.SendMessageAsync(JsonSerializer.Serialize(item), cancellationToken: ct);
+                    try { await repository.NoteEnqueuedAsync(planned.Id, attempt, ct); }
+                    catch (InvalidOperationException) { } // Dispatcher already claimed it.
                     queued[planned.Id] = attempt;
                 }
             }
@@ -149,8 +151,29 @@ public sealed class CollectionImportEngine(
                     if (!_activeCopyAttempts.TryGetValue(state.Id, out var active) || active != state.AttemptId)
                         await repository.FailAttemptAsync(state.Id, state.AttemptId!, "App Service copy was interrupted", ct);
                 }
-                else if (state.AttemptStartedAt is { } started && DateTimeOffset.UtcNow - started > TimeSpan.FromMinutes(2))
-                    await repository.FailAttemptAsync(state.Id, state.AttemptId!, "Worker launch was interrupted", ct);
+                else if (state.Outcome == "queued" &&
+                    DateTimeOffset.UtcNow - (state.LastEnqueuedAt ?? state.AttemptStartedAt ?? DateTimeOffset.MinValue) > TimeSpan.FromMinutes(2))
+                {
+                    var definition = _definitions.Single(d => d.Id == state.Id);
+                    var item = new QueueWorkItem(state.Id, state.AttemptId!, state.AttemptRevision!.Value,
+                        state.InputManifestUri ?? throw new InvalidDataException($"Queued attempt {state.AttemptId} has no input manifest"),
+                        AttemptOutputPrefix(state.Id, state.AttemptId!), definition.RecipeVersion);
+                    await queue.SendMessageAsync(JsonSerializer.Serialize(item), cancellationToken: ct);
+                    try { await repository.NoteEnqueuedAsync(state.Id, state.AttemptId!, ct); }
+                    catch (InvalidOperationException) { } // Dispatcher claimed the queued attempt.
+                }
+                else if (state.Outcome is "launching" or "launch-uncertain" or "running")
+                {
+                    // A start response or Table attachment can be lost after Azure accepted it.
+                    // The worker's immutable completion marker is sufficient to recover success.
+                    if (await TryCompleteFromMarkerAsync(state, ct)) continue;
+                    if (state.Outcome is "launching" or "running" && state.AttemptStartedAt is { } started &&
+                        DateTimeOffset.UtcNow - started > TimeSpan.FromMinutes(2))
+                    {
+                        try { await repository.MarkLaunchUncertainAsync(state.Id, state.AttemptId!, ct); }
+                        catch (InvalidOperationException) { } // Execution attached meanwhile.
+                    }
+                }
                 continue;
             }
             var status = await launcher.GetStatusAsync(state.ExecutionId, ct);
@@ -160,24 +183,39 @@ public sealed class CollectionImportEngine(
                 await repository.FailAttemptAsync(state.Id, state.AttemptId!, status.Message ?? "Container Apps Job failed", ct);
                 continue;
             }
-            var marker = AttemptOutputPrefix(state.Id, state.AttemptId!) + "_COMPLETE.json";
-            try
-            {
-                var manifest = await manifestReader.ReadAsync(marker, ct);
-                var check = await verifier.VerifyAsync(manifest, ct);
-                var definition = _definitions.Single(d => d.Id == state.Id);
-                if (!check.Valid || manifest.Target != state.Id || manifest.RecipeVersion != definition.RecipeVersion ||
-                    !definition.HasRequiredArtifacts(manifest))
-                    throw new InvalidDataException(check.Error ?? "Worker marker identity or recipe mismatch");
-                await repository.CompleteAttemptAsync(state.Id, state.AttemptId!, state.AttemptRevision!.Value,
-                    marker, check.Fingerprint!, definition.RecipeVersion, manifest.InputFingerprints, ct);
-                _verificationCache.TryRemove(state.Id, out _);
-            }
-            catch (Exception error) when (error is not OperationCanceledException)
-            {
-                await repository.FailAttemptAsync(state.Id, state.AttemptId!, error.Message, ct);
-            }
+            await CompleteFromMarkerAsync(state, ct);
         }
+    }
+
+    private async Task<bool> TryCompleteFromMarkerAsync(TargetState state, CancellationToken ct)
+    {
+        var marker = AttemptOutputPrefix(state.Id, state.AttemptId!) + "_COMPLETE.json";
+        try
+        {
+            await manifestReader.ReadAsync(marker, ct);
+        }
+        catch (RequestFailedException error) when (error.Status == 404) { return false; }
+        catch (FileNotFoundException) { return false; }
+        await CompleteFromMarkerAsync(state, ct);
+        return true;
+    }
+
+    private async Task CompleteFromMarkerAsync(TargetState state, CancellationToken ct)
+    {
+        var marker = AttemptOutputPrefix(state.Id, state.AttemptId!) + "_COMPLETE.json";
+        var manifest = await manifestReader.ReadAsync(marker, ct);
+        var check = await verifier.VerifyAsync(manifest, ct);
+        var definition = _definitions.Single(d => d.Id == state.Id);
+        if (!check.Valid || manifest.Target != state.Id || manifest.RecipeVersion != definition.RecipeVersion ||
+            !definition.HasRequiredArtifacts(manifest))
+        {
+            await repository.FailAttemptAsync(state.Id, state.AttemptId!,
+                check.Error ?? "Worker marker identity or recipe mismatch", ct);
+            return;
+        }
+        await repository.CompleteAttemptAsync(state.Id, state.AttemptId!, state.AttemptRevision!.Value,
+            marker, check.Fingerprint!, definition.RecipeVersion, manifest.InputFingerprints, ct);
+        _verificationCache.TryRemove(state.Id, out _);
     }
 
     private async Task ProcessCopyAsync(TargetDefinition definition,

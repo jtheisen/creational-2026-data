@@ -84,6 +84,7 @@ else
     builder.Services.AddSingleton<IComputeJobLauncher>(new UnavailableJobLauncher());
 builder.Services.AddSingleton<CollectionImportEngine>();
 builder.Services.AddSingleton<ICollectionImportEngine>(sp => sp.GetRequiredService<CollectionImportEngine>());
+builder.Services.AddHostedService<AttemptReconciliationService>();
 builder.Services.AddSingleton<ImportCoordinator>();
 var app = builder.Build();
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
