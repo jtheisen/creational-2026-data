@@ -15,6 +15,7 @@ public sealed record CollectionPlanSnapshot(ImportPlan Plan,
 public sealed class CollectionImportEngine(
     IReadOnlyList<ManifestShard> shards,
     ITargetRepository repository,
+    ICollectionSettingsRepository settings,
     IOutputManifestReader manifestReader,
     TargetVerifier verifier,
     TargetPlanner planner,
@@ -106,7 +107,10 @@ public sealed class CollectionImportEngine(
                     state.Outcome == "complete" && snapshot.Plan[id].Disposition == TargetDisposition.Current)
                     queued.Remove(id);
             }
-            var capacity = Math.Max(0, 5 - queued.Count - copyTasks.Count);
+            var parallelism = await settings.GetParallelismAsync(collection, ct);
+            var capacity = CollectionParallelism.AvailableSlots(parallelism,
+                queued.Keys, copyTasks.Keys,
+                snapshot.States.Values.Where(state => state.AttemptId is not null).Select(state => state.Id));
             foreach (var planned in snapshot.Plan.Targets.Where(t => t.Disposition == TargetDisposition.Run).Take(capacity))
             {
                 if (queued.ContainsKey(planned.Id) || copyTasks.ContainsKey(planned.Id)) continue;

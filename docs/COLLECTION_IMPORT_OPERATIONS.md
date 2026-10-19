@@ -84,23 +84,28 @@ nonzero on failure and publishes its marker only after artifact uploads.
 The coordinator also checks platform execution status to catch failures the
 Python process could not write to Tables. A failed target leaves prior verified
 outputs available and blocks dependents for that run. A later Import retries it.
+The dashboard stores a collection-wide limit of 1–5 outstanding targets in a
+`__settings` row of the `CollectionTargets` table; the default is 1. It counts
+copy and compute targets together, including attempts recorded in Table
+Storage. The scheduler rereads the limit during an import, so a saved change
+affects subsequent scheduling without restarting the app. The limit controls
+concurrency, not the scope of an import: `Import collection` can still proceed
+through every due target and its descendants.
 
 ## Validation sequence
 
 1. Verify-only and apply bootstrap, then run apply again and confirm zero newly
    adopted targets.
 2. Open `/collections/enwiki-2026-10-01`; confirm all 83 targets are current.
-3. Mark one parse shard stale. Import; confirm one parser executes. Correlation
-   runs only if the verified parse output fingerprint changes.
-4. Mark one dump shard stale. Import; confirm only that shard recopies. If its
-   SHA-256 is unchanged, candidate-pool and parser descendants stay current.
-5. Interrupt a test transfer. Confirm the old current Blob still serves, then
-   rerun Import. After successful replacement, confirm the old version is soft
-   deleted and the new current Blob remains available.
+3. Do not use `Import collection` for a bounded single-target canary until a
+   single-target action exists. A limit of 1 still permits later descendants
+   and other due targets to run sequentially.
+4. After a bounded single-target action exists, run one parse-shard canary and
+   verify its output marker and Table state without scheduling descendants.
+5. Test a single dump-shard replacement separately. Confirm the old current
+   Blob remains available until the new copy verifies, then check version
+   cleanup and any recorded warning.
 
-The current workspace has no Git metadata and no local .NET SDK. .NET tests
-were run with SDK 10.0.402 on `wikipedia-dev`; Python tests can run in the
-local `.venv`. The Container Apps image and App Service have not been deployed
-until resource IDs, registry, and required role assignments are available.
-The selected image registry is public GHCR, so Azure Container Registry is not
-required. The Container Apps Job should use an immutable image digest.
+The control plane deploys from GitHub to App Service, and the worker image is
+published to public GHCR. A Container Apps Job should use an immutable image
+digest. Provisioning and live worker verification are separate from this code.

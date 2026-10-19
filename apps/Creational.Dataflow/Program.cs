@@ -49,6 +49,7 @@ builder.Services.AddSingleton<IReadOnlyList<ManifestShard>>(webShards);
 var webTableService = new TableServiceClient(new Uri(accountUrl.Replace(".blob.", ".table.", StringComparison.OrdinalIgnoreCase)), credential);
 builder.Services.AddSingleton(webTableService.GetTableClient("CollectionTargets"));
 builder.Services.AddSingleton<ITargetRepository, TableTargetRepository>();
+builder.Services.AddSingleton<ICollectionSettingsRepository, TableCollectionSettingsRepository>();
 builder.Services.AddSingleton<IOutputManifestReader, AzureOutputManifestReader>();
 builder.Services.AddSingleton(sp => new WorkInputBuilder(sp.GetRequiredService<IOutputManifestReader>(),
     webShards, blobStore));

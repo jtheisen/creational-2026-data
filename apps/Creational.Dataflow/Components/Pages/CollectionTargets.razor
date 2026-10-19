@@ -3,6 +3,7 @@
 @inject CollectionImportEngine Engine
 @inject ImportCoordinator Coordinator
 @inject Creational.Dataflow.Storage.ITargetRepository Repository
+@inject Creational.Dataflow.Storage.ICollectionSettingsRepository Settings
 @inject TransferLedger Ledger
 
 <p><a href="/">← Collections</a></p>
@@ -13,6 +14,13 @@
     <button type="button" @onclick="StartImport">Import collection</button>
     <button type="button" class="secondary" @onclick="Refresh">Refresh now</button>
 </div>
+<div class="actions">
+    <label for="parallelism">Maximum concurrent targets</label>
+    <input id="parallelism" type="number" min="1" max="@Creational.Dataflow.Execution.CollectionParallelism.Maximum" step="1" @bind="_parallelismDraft" />
+    <button type="button" class="secondary" @onclick="SaveParallelism">Save limit</button>
+    <span>Saved limit: @_savedParallelism</span>
+</div>
+<p>This limits simultaneous targets. Import collection can still run all due targets in sequence.</p>
 @if (!string.IsNullOrEmpty(_message))
 {
     <p class="notice" role="status">@_message</p>
@@ -92,6 +100,8 @@ else
     private CollectionPlanSnapshot? _snapshot;
     private string? _message;
     private string? _error;
+    private int _parallelismDraft = Creational.Dataflow.Execution.CollectionParallelism.Default;
+    private int _savedParallelism = Creational.Dataflow.Execution.CollectionParallelism.Default;
     private readonly CancellationTokenSource _refreshStop = new();
     private Task? _refreshTask;
 
@@ -106,6 +116,9 @@ else
         try
         {
             _snapshot = await Engine.GetRecordedPlanAsync(October2026Collection.Collection, _refreshStop.Token);
+            var parallelism = await Settings.GetParallelismAsync(October2026Collection.Collection, _refreshStop.Token);
+            if (_parallelismDraft == _savedParallelism) _parallelismDraft = parallelism;
+            _savedParallelism = parallelism;
             _error = null;
         }
         catch (Exception error) when (error is not OperationCanceledException)
@@ -132,6 +145,18 @@ else
             await Repository.MarkStaleAsync(id, "Marked in dashboard", _refreshStop.Token);
             _message = $"Marked {id} stale. The plan below shows what would run.";
             await Refresh();
+        }
+        catch (Exception error) { _error = error.Message; }
+    }
+
+    private async Task SaveParallelism()
+    {
+        try
+        {
+            await Settings.SetParallelismAsync(October2026Collection.Collection, _parallelismDraft, _refreshStop.Token);
+            _savedParallelism = _parallelismDraft;
+            _message = $"Maximum concurrent targets set to {_savedParallelism}.";
+            _error = null;
         }
         catch (Exception error) { _error = error.Message; }
     }
