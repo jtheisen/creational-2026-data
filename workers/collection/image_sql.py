@@ -14,7 +14,8 @@ COLUMNS = (
     'img_description_id', 'img_actor', 'img_timestamp', 'img_sha1',
 )
 SCHEMA = pa.schema([
-    ('source_wiki', pa.string()), ('file_title', pa.string()), ('canonical_key', pa.string()),
+    ('source_wiki', pa.string()), ('source_dump_sha1', pa.string()),
+    ('file_title', pa.string()), ('canonical_key', pa.string()),
     ('original_bytes', pa.int64()), ('width', pa.int32()), ('height', pa.int32()),
     ('media_type', pa.string()), ('mime', pa.string()), ('uploaded_at', pa.string()),
     ('sha1_base36', pa.string()),
@@ -26,7 +27,8 @@ ESCAPES = {ord('0'): 0, ord('b'): 8, ord('n'): 10, ord('r'): 13,
 def canonical_key(title: str) -> str:
     if title.lower().startswith('file:'):
         title = title[5:]
-    return title.replace('_', ' ').strip().casefold()
+    title = title.replace('_', ' ').strip()
+    return title[0].upper() + title[1:] if title else title
 
 
 def row_key(line: bytes) -> str:
@@ -135,7 +137,8 @@ def _lines_from_gzip(chunks):
         yield pending
 
 
-def convert_image_sql(chunks, output: Path, wiki: str, candidates: set[str] | None = None) -> dict:
+def convert_image_sql(chunks, output: Path, wiki: str, source_dump_sha1: str,
+                      candidates: set[str] | None = None) -> dict:
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     columns = []
@@ -159,7 +162,7 @@ def convert_image_sql(chunks, output: Path, wiki: str, candidates: set[str] | No
             if candidates is not None and row_key(line) not in candidates:
                 continue
             row = parse_image_row(line)
-            rows.append({'source_wiki': wiki, **row})
+            rows.append({'source_wiki': wiki, 'source_dump_sha1': source_dump_sha1, **row})
             retained += 1
             if len(rows) >= 20000:
                 writer = writer or pq.ParquetWriter(output, SCHEMA, compression='snappy')
@@ -172,7 +175,8 @@ def convert_image_sql(chunks, output: Path, wiki: str, candidates: set[str] | No
         writer = writer or pq.ParquetWriter(output, SCHEMA, compression='snappy')
         if rows:
             writer.write_table(pa.Table.from_pylist(rows, schema=SCHEMA))
-        return {'source_wiki': wiki, 'scanned': scanned, 'retained': retained,
+        return {'source_wiki': wiki, 'source_dump_sha1': source_dump_sha1,
+                'scanned': scanned, 'retained': retained,
                 'candidate_count': None if candidates is None else len(candidates)}
     finally:
         if writer is not None:

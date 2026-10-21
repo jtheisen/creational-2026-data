@@ -41,7 +41,7 @@
                 <MudPaper Class="pa-4">
                     <MudText Typo="Typo.h5">@((knownBytes / 1073741824.0).ToString("N2")) GiB</MudText>
                     <MudText>known original size</MudText>
-                    <MudText Typo="Typo.caption">@_page.MetadataResolvedCount?.ToString("N0") images · @_page.MetadataMissingCount?.ToString("N0") missing · @_page.MetadataExcludedCount?.ToString("N0") other media</MudText>
+                    <MudText Typo="Typo.caption">@_page.MetadataResolvedCount?.ToString("N0") images · @_page.MetadataMissingCount?.ToString("N0") missing · @_page.MetadataAmbiguousCount?.ToString("N0") ambiguous · @_page.MetadataExcludedCount?.ToString("N0") other media</MudText>
                 </MudPaper>
             }
         </MudStack>

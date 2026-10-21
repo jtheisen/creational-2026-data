@@ -44,6 +44,7 @@ public class ImageCatalogQueryTests
         Assert.Equal(125, page.KnownOriginalBytes);
         Assert.Equal(1, page.MetadataResolvedCount);
         Assert.Equal(1, page.MetadataMissingCount);
+        Assert.Equal(0, page.MetadataAmbiguousCount);
     }
 
     [Fact]
@@ -58,6 +59,20 @@ public class ImageCatalogQueryTests
         Assert.Equal(1, page.MetadataResolvedCount);
         Assert.Equal(0, page.MetadataMissingCount);
         Assert.Equal(1, page.MetadataExcludedCount);
+        Assert.Equal(0, page.MetadataAmbiguousCount);
+    }
+
+    [Fact]
+    public void FilenameCaseAfterFirstLetterRemainsDistinct()
+    {
+        using var fixture = new CatalogFixture();
+        fixture.AddCaseVariant();
+
+        var page = ImageCatalogQuery.Query(fixture.Root, ImageSelection.Parse("10"), 0, 10);
+
+        Assert.Equal(3, page.CandidateCount);
+        Assert.Contains(page.Items, item => item.FileTitle == "File:A.jpg");
+        Assert.Contains(page.Items, item => item.FileTitle == "File:A.JPG");
     }
 
     private sealed class CatalogFixture : IDisposable
@@ -79,7 +94,16 @@ public class ImageCatalogQueryTests
         {
             using var db = new DuckDBConnection("Data Source=:memory:");
             db.Open();
-            Write(db, "resolved_images.parquet", $"SELECT * FROM (VALUES ('a.jpg',125,'enwiki-local'), ('b.jpg',{(secondBytes is null ? "NULL" : secondBytes.ToString())},'{secondStatus}')) t(canonical_key,original_bytes,status)");
+            Write(db, "resolved_images.parquet", $"SELECT * FROM (VALUES ('A.jpg',125,'enwiki-local'), ('B.jpg',{(secondBytes is null ? "NULL" : secondBytes.ToString())},'{secondStatus}')) t(canonical_key,original_bytes,status)");
+        }
+
+        public void AddCaseVariant()
+        {
+            using var db = new DuckDBConnection("Data Source=:memory:");
+            db.Open();
+            var current = Path.Combine(Root, "parse/one/image_references.parquet").Replace("'", "''");
+            Write(db, "parse/one/variant.parquet", $"SELECT * FROM read_parquet('{current}') UNION ALL SELECT 2,200,'file_link','File:A.JPG','A'");
+            File.Move(Path.Combine(Root, "parse/one/variant.parquet"), Path.Combine(Root, "parse/one/image_references.parquet"), true);
         }
 
         private void Write(DuckDBConnection db, string relative, string select)

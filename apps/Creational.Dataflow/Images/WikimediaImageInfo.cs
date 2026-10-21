@@ -12,13 +12,13 @@ public sealed record ImageMetadata(string FileTitle, string? ThumbnailUrl, strin
 public sealed class WikimediaImageInfo(HttpClient http, string? userAgent)
 {
     private readonly ConcurrentDictionary<string, (ImageMetadata Data, DateTimeOffset Until)> _cache =
-        new(StringComparer.OrdinalIgnoreCase);
+        new(StringComparer.Ordinal);
 
     public async Task<IReadOnlyDictionary<string, ImageMetadata>> ResolveAsync(
         IReadOnlyList<string> titles, CancellationToken ct)
     {
-        var result = new Dictionary<string, ImageMetadata>(StringComparer.OrdinalIgnoreCase);
-        var missing = titles.Distinct(StringComparer.OrdinalIgnoreCase).Where(title =>
+        var result = new Dictionary<string, ImageMetadata>(StringComparer.Ordinal);
+        var missing = titles.Distinct(StringComparer.Ordinal).Where(title =>
         {
             if (_cache.TryGetValue(title, out var cached) && cached.Until > DateTimeOffset.UtcNow)
             {
@@ -36,7 +36,7 @@ public sealed class WikimediaImageInfo(HttpClient http, string? userAgent)
             var local = await FetchAsync("en.wikipedia.org", batch, ct);
             var remaining = batch.Where(title => !local.ContainsKey(Normalize(title))).ToArray();
             var commons = remaining.Length == 0
-                ? new Dictionary<string, ImageMetadata>(StringComparer.OrdinalIgnoreCase)
+                ? new Dictionary<string, ImageMetadata>(StringComparer.Ordinal)
                 : await FetchAsync("commons.wikimedia.org", remaining, ct);
             foreach (var title in batch)
             {
@@ -54,7 +54,7 @@ public sealed class WikimediaImageInfo(HttpClient http, string? userAgent)
     private async Task<Dictionary<string, ImageMetadata>> FetchAsync(string host,
         IReadOnlyList<string> titles, CancellationToken ct)
     {
-        var result = new Dictionary<string, ImageMetadata>(StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, ImageMetadata>(StringComparer.Ordinal);
         var url = $"https://{host}/w/api.php?action=query&format=json&prop=imageinfo" +
             "&iiprop=url%7Csize%7Cextmetadata&iiurlwidth=320" +
             "&iiextmetadatafilter=LicenseShortName%7CLicenseUrl%7CArtist%7CCredit" +
@@ -88,7 +88,13 @@ public sealed class WikimediaImageInfo(HttpClient http, string? userAgent)
         return result;
     }
 
-    private static string Normalize(string title) => title.Replace('_', ' ').Trim();
+    private static string Normalize(string title)
+    {
+        title = title.Replace('_', ' ').Trim();
+        if (!title.StartsWith("File:", StringComparison.OrdinalIgnoreCase) || title.Length <= 5)
+            return title;
+        return "File:" + char.ToUpperInvariant(title[5]) + title[6..];
+    }
 
     private static string? Value(JsonElement element, string key) =>
         element.ValueKind == JsonValueKind.Object && element.TryGetProperty(key, out var value)

@@ -107,9 +107,11 @@ public sealed class WorkInputBuilder(IOutputManifestReader reader, IReadOnlyList
                 break;
             case "enwiki-image-metadata":
                 payload["dump"] = (await Artifact(Id("enwiki-image-dump"), ImageDumpPins.Enwiki.FileName)).Path;
+                payload["source_dump_sha1"] = ImageDumpPins.Enwiki.Sha1;
                 break;
             case "commons-image-metadata":
                 payload["dump"] = (await Artifact(Id("commons-image-dump"), ImageDumpPins.Commons.FileName)).Path;
+                payload["source_dump_sha1"] = ImageDumpPins.Commons.Sha1;
                 payload["image_references"] = await ImageReferencesAsync();
                 break;
             case "resolved-image-metadata":

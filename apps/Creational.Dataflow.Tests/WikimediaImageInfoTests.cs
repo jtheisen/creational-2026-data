@@ -8,6 +8,22 @@ namespace Creational.Dataflow.Tests;
 public class WikimediaImageInfoTests
 {
     [Fact]
+    public async Task DistinctFilenameCaseGetsDistinctMetadata()
+    {
+        var handler = new StubHandler(_ => """
+            {"query":{"pages":{"1":{"title":"File:Bird.jpg","imageinfo":[{"size":100}]},
+                               "2":{"title":"File:Bird.JPG","imageinfo":[{"size":200}]}}}}
+            """);
+        using var http = new HttpClient(handler);
+        var lookup = new WikimediaImageInfo(http, "CreationalDataflow/1.0 (contact: test@example.org)");
+
+        var result = await lookup.ResolveAsync(["File:Bird.jpg", "File:Bird.JPG"], CancellationToken.None);
+
+        Assert.Equal(100, result["File:Bird.jpg"].OriginalBytes);
+        Assert.Equal(200, result["File:Bird.JPG"].OriginalBytes);
+    }
+
+    [Fact]
     public async Task PrefersLocalWikipediaAndFallsBackToCommons()
     {
         var handler = new StubHandler(request => request.RequestUri!.Host switch

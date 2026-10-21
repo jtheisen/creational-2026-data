@@ -145,6 +145,9 @@ uncompressed disk copy. The English Wikipedia conversion retains its whole
 image table; the Commons conversion filters to parsed image-reference titles.
 The final resolution target gives a local English Wikipedia file precedence
 over the same filename on Commons, and records missing or non-image media.
+Each metadata row retains the pinned source-dump SHA-1. Filename matching
+preserves case after the first character; duplicate normalized titles within
+a source are marked ambiguous and excluded from byte totals.
 
 The SQL files contain **original** byte sizes. The gallery can show the known
 original-byte total for a branch after resolution, counting each file once.

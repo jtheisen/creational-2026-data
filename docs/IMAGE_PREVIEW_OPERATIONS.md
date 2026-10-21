@@ -8,7 +8,7 @@ links, and galleries. It counts unresolved markup separately. It fetches
 Wikimedia `imageinfo` thumbnail and license metadata only for the visible 24
 files. Once `resolved-image-metadata` completes, it also shows the selected
 branch's known original-byte total and counts of resolved, missing, and
-non-image media. No image bytes are copied.
+non-image media, and ambiguous filenames. No image bytes are copied.
 
 On first use after an App Service process restart, the control plane downloads
 the compact OTT hierarchy, exact matches, and the 19 parsed article/image

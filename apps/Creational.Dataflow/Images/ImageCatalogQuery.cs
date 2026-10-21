@@ -11,6 +11,7 @@ public sealed record ImageCatalogPage(int PageCount, int CandidateCount, int Unr
     public int? MetadataResolvedCount { get; init; }
     public int? MetadataMissingCount { get; init; }
     public int? MetadataExcludedCount { get; init; }
+    public int? MetadataAmbiguousCount { get; init; }
 }
 
 public static class ImageCatalogQuery
@@ -60,7 +61,7 @@ public static class ImageCatalogQuery
             CREATE TEMP TABLE candidate_files AS
             SELECT file_title,article_title,source_kind FROM (
                 SELECT *,row_number() OVER (
-                    PARTITION BY lower(replace(file_title,'_',' '))
+                    PARTITION BY upper(left(replace(file_title,'_',' '),6)) || substring(replace(file_title,'_',' '),7)
                     ORDER BY article_title,source_kind,file_title
                 ) AS row_number
                 FROM selected_images WHERE file_title IS NOT NULL
@@ -85,10 +86,12 @@ public static class ImageCatalogQuery
             SELECT CAST(coalesce(sum(CASE WHEN r.status IN ('enwiki-local','commons') THEN r.original_bytes END),0) AS BIGINT),
                    count(*) FILTER (WHERE r.status IN ('enwiki-local','commons')),
                    count(*) FILTER (WHERE r.status IS NULL OR r.status = 'missing'),
-                   count(*) FILTER (WHERE r.status = 'unsupported-media')
+                   count(*) FILTER (WHERE r.status = 'unsupported-media'),
+                   count(*) FILTER (WHERE r.status = 'ambiguous')
             FROM candidate_files c
             LEFT JOIN read_parquet({Quote(metadata.Replace('\\', '/'))}) r
-              ON lower(replace(substring(c.file_title,6),'_',' '))=r.canonical_key
+              ON upper(left(replace(substring(c.file_title,6),'_',' '),1)) ||
+                 substring(replace(substring(c.file_title,6),'_',' '),2)=r.canonical_key
             """;
         using var totalsReader = totals.ExecuteReader();
         totalsReader.Read();
@@ -97,7 +100,8 @@ public static class ImageCatalogQuery
             KnownOriginalBytes = Convert.ToInt64(totalsReader.GetValue(0)),
             MetadataResolvedCount = checked((int)Convert.ToInt64(totalsReader.GetValue(1))),
             MetadataMissingCount = checked((int)Convert.ToInt64(totalsReader.GetValue(2))),
-            MetadataExcludedCount = checked((int)Convert.ToInt64(totalsReader.GetValue(3)))
+            MetadataExcludedCount = checked((int)Convert.ToInt64(totalsReader.GetValue(3))),
+            MetadataAmbiguousCount = checked((int)Convert.ToInt64(totalsReader.GetValue(4)))
         };
     }
 

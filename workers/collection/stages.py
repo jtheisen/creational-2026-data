@@ -27,7 +27,8 @@ def _image_references(inputs, scratch, store):
 
 def enwiki_image_metadata(inputs, scratch, store):
     from .image_sql import convert_image_sql
-    report = convert_image_sql(store.iter_chunks(inputs['dump']), scratch / 'images.parquet', 'enwiki')
+    report = convert_image_sql(store.iter_chunks(inputs['dump']), scratch / 'images.parquet',
+                               'enwiki', inputs['source_dump_sha1'])
     (scratch / 'report.json').write_text(json.dumps(report, sort_keys=True))
     return ['images.parquet', 'report.json']
 
@@ -36,7 +37,7 @@ def commons_image_metadata(inputs, scratch, store):
     from .image_sql import convert_image_sql
     candidates = _image_references(inputs, scratch, store)
     report = convert_image_sql(store.iter_chunks(inputs['dump']), scratch / 'images.parquet',
-                               'commonswiki', candidates)
+                               'commonswiki', inputs['source_dump_sha1'], candidates)
     (scratch / 'report.json').write_text(json.dumps(report, sort_keys=True))
     return ['images.parquet', 'report.json']
 
@@ -56,22 +57,34 @@ def resolved_image_metadata(inputs, scratch, store):
             SELECT c.canonical_key,
                    COALESCE(e.file_title, m.file_title) AS file_title,
                    COALESCE(e.source_wiki, m.source_wiki) AS source_wiki,
-                   COALESCE(e.original_bytes, m.original_bytes) AS original_bytes,
+                   CASE WHEN e.match_count > 1 OR (e.file_title IS NULL AND m.match_count > 1)
+                        THEN NULL ELSE COALESCE(e.original_bytes, m.original_bytes) END AS original_bytes,
                    COALESCE(e.width, m.width) AS width,
                    COALESCE(e.height, m.height) AS height,
                    COALESCE(e.media_type, m.media_type) AS media_type,
                    COALESCE(e.mime, m.mime) AS mime,
                    COALESCE(e.uploaded_at, m.uploaded_at) AS uploaded_at,
                    COALESCE(e.sha1_base36, m.sha1_base36) AS sha1_base36,
-                   CASE WHEN e.file_title IS NULL AND m.file_title IS NULL THEN 'missing'
+                   COALESCE(e.source_dump_sha1, m.source_dump_sha1) AS source_dump_sha1,
+                   CASE WHEN e.match_count > 1 OR (e.file_title IS NULL AND m.match_count > 1)
+                             THEN 'ambiguous'
+                        WHEN e.file_title IS NULL AND m.file_title IS NULL THEN 'missing'
                         WHEN COALESCE(e.media_type, m.media_type, '') NOT IN ('BITMAP', 'DRAWING')
                              THEN 'unsupported-media'
                         WHEN e.file_title IS NOT NULL THEN 'enwiki-local'
                         WHEN m.file_title IS NOT NULL THEN 'commons'
                         ELSE 'missing' END AS status
             FROM read_parquet(?) c
-            LEFT JOIN read_parquet(?) e USING (canonical_key)
-            LEFT JOIN read_parquet(?) m USING (canonical_key)''', [str(keys), str(en), str(commons)])
+            LEFT JOIN (
+                SELECT *, count(*) OVER (PARTITION BY canonical_key) AS match_count,
+                       row_number() OVER (PARTITION BY canonical_key ORDER BY file_title) AS match_number
+                FROM read_parquet(?)
+            ) e ON c.canonical_key=e.canonical_key AND e.match_number=1
+            LEFT JOIN (
+                SELECT *, count(*) OVER (PARTITION BY canonical_key) AS match_count,
+                       row_number() OVER (PARTITION BY canonical_key ORDER BY file_title) AS match_number
+                FROM read_parquet(?)
+            ) m ON c.canonical_key=m.canonical_key AND m.match_number=1''', [str(keys), str(en), str(commons)])
         output = str(scratch / 'resolved_images.parquet').replace("'", "''")
         db.execute(f"COPY resolved TO '{output}' (FORMAT PARQUET, COMPRESSION SNAPPY)")
         report = dict(db.execute('SELECT status, count(*) FROM resolved GROUP BY status').fetchall())

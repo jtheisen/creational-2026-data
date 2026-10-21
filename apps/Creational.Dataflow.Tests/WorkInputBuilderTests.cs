@@ -57,6 +57,7 @@ public class WorkInputBuilderTests
         var payload = await new WorkInputBuilder(reader, shards).BuildPayloadAsync(target, states, CancellationToken.None);
 
         Assert.Equal("https://example.test/commons.gz", payload["dump"]!.GetValue<string>());
+        Assert.Equal(ImageDumpPins.Commons.Sha1, payload["source_dump_sha1"]!.GetValue<string>());
         Assert.Equal("https://example.test/refs.parquet", payload["image_references"]!.AsArray().Single()!.GetValue<string>());
     }
 
