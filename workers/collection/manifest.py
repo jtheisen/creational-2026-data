@@ -29,6 +29,9 @@ class AzureObjectStore:
     def read_json(self, uri):
         return json.loads(self._blob(uri).download_blob().readall())
 
+    def iter_chunks(self, uri):
+        yield from self._blob(uri).download_blob(max_concurrency=1).chunks()
+
     def download(self, uri, path):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)

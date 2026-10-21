@@ -13,6 +13,8 @@ class WorkerTests(unittest.TestCase):
             'alias-index', 'alias-seed', 'candidate-pool-shard',
             'candidate-pool-finalize', 'parse-shard', 'parse-finalize',
             'ott-names', 'ott-correlation',
+            'source-set', 'enwiki-image-metadata', 'commons-image-metadata',
+            'resolved-image-metadata',
         }, set(STAGES))
 
     def test_failed_stage_does_not_publish_complete_marker(self):

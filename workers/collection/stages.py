@@ -9,6 +9,75 @@ import sys
 from .manifest import sha256_file
 
 
+def source_set(inputs, scratch, store):
+    (scratch / 'pins.json').write_text(json.dumps(inputs['pins'], sort_keys=True))
+    return ['pins.json']
+
+
+def _image_references(inputs, scratch, store):
+    import pyarrow.parquet as pq
+    from .image_sql import canonical_key
+    candidates = set()
+    for index, uri in enumerate(inputs['image_references']):
+        path = store.download(uri, scratch / '_input' / f'images-{index}.parquet')
+        for batch in pq.ParquetFile(path).iter_batches(columns=['file_title'], batch_size=20000):
+            candidates.update(canonical_key(title) for title in batch.column(0).to_pylist() if title)
+    return candidates
+
+
+def enwiki_image_metadata(inputs, scratch, store):
+    from .image_sql import convert_image_sql
+    report = convert_image_sql(store.iter_chunks(inputs['dump']), scratch / 'images.parquet', 'enwiki')
+    (scratch / 'report.json').write_text(json.dumps(report, sort_keys=True))
+    return ['images.parquet', 'report.json']
+
+
+def commons_image_metadata(inputs, scratch, store):
+    from .image_sql import convert_image_sql
+    candidates = _image_references(inputs, scratch, store)
+    report = convert_image_sql(store.iter_chunks(inputs['dump']), scratch / 'images.parquet',
+                               'commonswiki', candidates)
+    (scratch / 'report.json').write_text(json.dumps(report, sort_keys=True))
+    return ['images.parquet', 'report.json']
+
+
+def resolved_image_metadata(inputs, scratch, store):
+    import duckdb
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    en = store.download(inputs['enwiki_metadata'], scratch / '_input/enwiki.parquet')
+    commons = store.download(inputs['commons_metadata'], scratch / '_input/commons.parquet')
+    candidates = _image_references(inputs, scratch, store)
+    keys = scratch / '_input/candidates.parquet'
+    pq.write_table(pa.table({'canonical_key': sorted(candidates)}), keys, compression='snappy')
+    db = duckdb.connect()
+    try:
+        db.execute('''CREATE TEMP TABLE resolved AS
+            SELECT c.canonical_key,
+                   COALESCE(e.file_title, m.file_title) AS file_title,
+                   COALESCE(e.source_wiki, m.source_wiki) AS source_wiki,
+                   COALESCE(e.original_bytes, m.original_bytes) AS original_bytes,
+                   COALESCE(e.width, m.width) AS width,
+                   COALESCE(e.height, m.height) AS height,
+                   COALESCE(e.mime, m.mime) AS mime,
+                   COALESCE(e.uploaded_at, m.uploaded_at) AS uploaded_at,
+                   COALESCE(e.sha1_base36, m.sha1_base36) AS sha1_base36,
+                   CASE WHEN e.file_title IS NOT NULL THEN 'enwiki-local'
+                        WHEN m.file_title IS NOT NULL THEN 'commons'
+                        ELSE 'missing' END AS status
+            FROM read_parquet(?) c
+            LEFT JOIN read_parquet(?) e USING (canonical_key)
+            LEFT JOIN read_parquet(?) m USING (canonical_key)''', [str(keys), str(en), str(commons)])
+        output = str(scratch / 'resolved_images.parquet').replace("'", "''")
+        db.execute(f"COPY resolved TO '{output}' (FORMAT PARQUET, COMPRESSION SNAPPY)")
+        report = dict(db.execute('SELECT status, count(*) FROM resolved GROUP BY status').fetchall())
+    finally:
+        db.close()
+    (scratch / 'report.json').write_text(json.dumps({'candidates': len(candidates),
+                                                    'by_status': report}, sort_keys=True))
+    return ['resolved_images.parquet', 'report.json']
+
+
 def alias_index(inputs, scratch, store):
     from extract_lifeforms import index_redirects
     source = inputs['dump']
@@ -95,6 +164,10 @@ STAGES = {
     'parse-finalize': parse_finalize,
     'ott-names': ott_names,
     'ott-correlation': ott_correlation,
+    'source-set': source_set,
+    'enwiki-image-metadata': enwiki_image_metadata,
+    'commons-image-metadata': commons_image_metadata,
+    'resolved-image-metadata': resolved_image_metadata,
 }
 
 
