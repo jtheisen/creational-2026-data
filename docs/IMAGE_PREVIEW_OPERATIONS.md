@@ -6,7 +6,9 @@ then uses the investigative exact-name correlation to find Wikipedia pages.
 The gallery shows distinct resolvable image files from taxobox fields, file
 links, and galleries. It counts unresolved markup separately. It fetches
 Wikimedia `imageinfo` thumbnail and license metadata only for the visible 24
-files. No original images are copied.
+files. Once `resolved-image-metadata` completes, it also shows the selected
+branch's known original-byte total and counts of resolved, missing, and
+non-image media. No image bytes are copied.
 
 On first use after an App Service process restart, the control plane downloads
 the compact OTT hierarchy, exact matches, and the 19 parsed article/image
@@ -42,6 +44,7 @@ publish a matching completion marker last. The long-term collection graph
 should make this a generated target when another OTT version is imported.
 
 The Wikimedia metadata client uses a descriptive User-Agent with the project
-repository URL as contact unless `Copies:UserAgent` is configured. A Commons
-miss falls back to English Wikipedia for locally hosted files. Missing rights
+repository URL as contact unless `Copies:UserAgent` is configured. It queries
+English Wikipedia first so a local file wins a same-name collision, then asks
+Commons for files not found there. Missing rights
 fields are flagged for review; badges do not certify import eligibility.

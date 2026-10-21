@@ -5,7 +5,13 @@ namespace Creational.Dataflow.Images;
 public sealed record ImageCandidate(string FileTitle, string ArticleTitle, string SourceKind);
 
 public sealed record ImageCatalogPage(int PageCount, int CandidateCount, int UnresolvedCount,
-    IReadOnlyList<ImageCandidate> Items);
+    IReadOnlyList<ImageCandidate> Items)
+{
+    public long? KnownOriginalBytes { get; init; }
+    public int? MetadataResolvedCount { get; init; }
+    public int? MetadataMissingCount { get; init; }
+    public int? MetadataExcludedCount { get; init; }
+}
 
 public static class ImageCatalogQuery
 {
@@ -71,7 +77,28 @@ public static class ImageCatalogQuery
         using var reader = command.ExecuteReader();
         var items = new List<ImageCandidate>();
         while (reader.Read()) items.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2)));
-        return new(pageCount, candidateCount, unresolved, items);
+        var page = new ImageCatalogPage(pageCount, candidateCount, unresolved, items);
+        var metadata = Path.Combine(root, "resolved_images.parquet");
+        if (!File.Exists(metadata)) return page;
+        using var totals = db.CreateCommand();
+        totals.CommandText = $"""
+            SELECT CAST(coalesce(sum(CASE WHEN r.status IN ('enwiki-local','commons') THEN r.original_bytes END),0) AS BIGINT),
+                   count(*) FILTER (WHERE r.status IN ('enwiki-local','commons')),
+                   count(*) FILTER (WHERE r.status IS NULL OR r.status = 'missing'),
+                   count(*) FILTER (WHERE r.status = 'unsupported-media')
+            FROM candidate_files c
+            LEFT JOIN read_parquet({Quote(metadata.Replace('\\', '/'))}) r
+              ON lower(replace(substring(c.file_title,6),'_',' '))=r.canonical_key
+            """;
+        using var totalsReader = totals.ExecuteReader();
+        totalsReader.Read();
+        return page with
+        {
+            KnownOriginalBytes = Convert.ToInt64(totalsReader.GetValue(0)),
+            MetadataResolvedCount = checked((int)Convert.ToInt64(totalsReader.GetValue(1))),
+            MetadataMissingCount = checked((int)Convert.ToInt64(totalsReader.GetValue(2))),
+            MetadataExcludedCount = checked((int)Convert.ToInt64(totalsReader.GetValue(3)))
+        };
     }
 
     private static string Quote(string text) => "'" + text.Replace("'", "''") + "'";

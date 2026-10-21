@@ -33,6 +33,33 @@ public class ImageCatalogQueryTests
         Assert.Equal(0, unknown.CandidateCount);
     }
 
+    [Fact]
+    public void KnownOriginalBytesCountEachResolvedFileOnce()
+    {
+        using var fixture = new CatalogFixture();
+        fixture.AddResolvedMetadata();
+
+        var page = ImageCatalogQuery.Query(fixture.Root, ImageSelection.Parse("10"), 0, 10);
+
+        Assert.Equal(125, page.KnownOriginalBytes);
+        Assert.Equal(1, page.MetadataResolvedCount);
+        Assert.Equal(1, page.MetadataMissingCount);
+    }
+
+    [Fact]
+    public void UnsupportedMediaDoesNotContributeToImageSize()
+    {
+        using var fixture = new CatalogFixture();
+        fixture.AddResolvedMetadata("unsupported-media", 1000000);
+
+        var page = ImageCatalogQuery.Query(fixture.Root, ImageSelection.Parse("10"), 0, 10);
+
+        Assert.Equal(125, page.KnownOriginalBytes);
+        Assert.Equal(1, page.MetadataResolvedCount);
+        Assert.Equal(0, page.MetadataMissingCount);
+        Assert.Equal(1, page.MetadataExcludedCount);
+    }
+
     private sealed class CatalogFixture : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "creational-image-test-" + Guid.NewGuid().ToString("N"));
@@ -46,6 +73,13 @@ public class ImageCatalogQueryTests
             Write(db, "matches.parquet", "SELECT * FROM (VALUES (1,100,10), (2,200,11), (3,300,20)) t(page_id,revision_id,ott_id)");
             Write(db, "parse/one/articles.parquet", "SELECT * FROM (VALUES (1,100,'Parent'), (2,200,'Child species'), (3,300,'Other')) t(page_id,revision_id,title)");
             Write(db, "parse/one/image_references.parquet", "SELECT * FROM (VALUES (1,100,'taxobox_parameter','File:A.jpg','A'), (2,200,'file_link','File:A.jpg','A'), (2,200,'taxobox_parameter','File:B.jpg','B'), (2,200,'gallery_entry',NULL,'{{bad}}'), (3,300,'file_link','File:C.jpg','C')) t(page_id,revision_id,source_kind,file_title,raw_value)");
+        }
+
+        public void AddResolvedMetadata(string secondStatus = "missing", long? secondBytes = null)
+        {
+            using var db = new DuckDBConnection("Data Source=:memory:");
+            db.Open();
+            Write(db, "resolved_images.parquet", $"SELECT * FROM (VALUES ('a.jpg',125,'enwiki-local'), ('b.jpg',{(secondBytes is null ? "NULL" : secondBytes.ToString())},'{secondStatus}')) t(canonical_key,original_bytes,status)");
         }
 
         private void Write(DuckDBConnection db, string relative, string select)

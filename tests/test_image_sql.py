@@ -71,11 +71,19 @@ class ImageSqlTests(unittest.TestCase):
             refs = root / 'refs.parquet'
             pq.write_table(pa.Table.from_pylist([{'canonical_key': 'bird.jpg', 'file_title': 'File:Bird.jpg',
                 'source_wiki': 'enwiki', 'original_bytes': 100, 'width': 330, 'height': 200,
-                'mime': 'image/jpeg', 'uploaded_at': '20261001010203', 'sha1_base36': 'a'}]), en)
+                'mime': 'image/jpeg', 'media_type': 'BITMAP', 'uploaded_at': '20261001010203', 'sha1_base36': 'a'}]), en)
             pq.write_table(pa.Table.from_pylist([{'canonical_key': 'bird.jpg', 'file_title': 'File:Bird.jpg',
                 'source_wiki': 'commonswiki', 'original_bytes': 999, 'width': 900, 'height': 600,
-                'mime': 'image/jpeg', 'uploaded_at': '20261001010203', 'sha1_base36': 'b'}]), commons)
-            pq.write_table(pa.table({'file_title': ['File:Bird.jpg', 'File:Bird.jpg', 'File:Missing.jpg']}), refs)
+                'mime': 'image/jpeg', 'media_type': 'BITMAP', 'uploaded_at': '20261001010203', 'sha1_base36': 'b'},
+                {'canonical_key': 'bird.ogg', 'file_title': 'File:Bird.ogg',
+                 'source_wiki': 'commonswiki', 'original_bytes': 1000000, 'width': 0, 'height': 0,
+                 'mime': 'audio/ogg', 'media_type': 'AUDIO', 'uploaded_at': '20261001010203', 'sha1_base36': 'c'},
+                {'canonical_key': 'unknown.bin', 'file_title': 'File:Unknown.bin',
+                 'source_wiki': 'commonswiki', 'original_bytes': 2000000, 'width': 0, 'height': 0,
+                 'mime': 'application/octet-stream', 'media_type': None,
+                 'uploaded_at': '20261001010203', 'sha1_base36': 'd'}]), commons)
+            pq.write_table(pa.table({'file_title': ['File:Bird.jpg', 'File:Bird.jpg', 'File:Missing.jpg',
+                                                   'File:Bird.ogg', 'File:Unknown.bin']}), refs)
 
             class Store:
                 def download(self, uri, destination):
@@ -88,10 +96,12 @@ class ImageSqlTests(unittest.TestCase):
             resolved_image_metadata({'enwiki_metadata': str(en), 'commons_metadata': str(commons),
                                      'image_references': [str(refs)]}, output_dir, Store())
             rows = {row['canonical_key']: row for row in pq.read_table(output_dir / 'resolved_images.parquet').to_pylist()}
-            self.assertEqual(2, len(rows))
+            self.assertEqual(4, len(rows))
             self.assertEqual(100, rows['bird.jpg']['original_bytes'])
             self.assertEqual('enwiki-local', rows['bird.jpg']['status'])
             self.assertEqual('missing', rows['missing.jpg']['status'])
+            self.assertEqual('unsupported-media', rows['bird.ogg']['status'])
+            self.assertEqual('unsupported-media', rows['unknown.bin']['status'])
 
 
 if __name__ == '__main__':

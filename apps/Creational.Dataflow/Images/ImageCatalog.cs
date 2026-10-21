@@ -41,12 +41,16 @@ public sealed class ImageCatalog(ITargetRepository targets, IOutputManifestReade
             needed.Add((id, "articles.parquet", $"parse/{shard.Key}/articles.parquet"));
             needed.Add((id, "image_references.parquet", $"parse/{shard.Key}/image_references.parquet"));
         }
+        var metadataId = new TargetId(October2026Collection.Collection, "resolved-image-metadata", "all");
+        if (states.TryGetValue(metadataId, out var metadataState) && metadataState.ManifestPath is not null &&
+            metadataState.Fingerprint is not null && metadataState.Outcome == "complete" && !metadataState.IsStale)
+            needed.Add((metadataId, "resolved_images.parquet", "resolved_images.parquet"));
 
         var requiredStates = needed.Select(x => x.Id).Distinct().Select(id =>
             states.TryGetValue(id, out var state) && state.ManifestPath is not null && state.Fingerprint is not null
                 ? state : throw new InvalidOperationException($"Image preview needs a completed {id} target"))
             .ToArray();
-        var signature = string.Join('\n', requiredStates.Select(s => $"{s.Id}:{s.Fingerprint}"));
+        var signature = string.Join('\n', requiredStates.Select(s => $"{s.Id}:{s.Fingerprint}:{s.ManifestPath}"));
         var version = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signature))).ToLowerInvariant();
         if (version == _version && _root is not null) return _root;
 

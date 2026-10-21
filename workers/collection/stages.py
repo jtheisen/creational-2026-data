@@ -59,10 +59,14 @@ def resolved_image_metadata(inputs, scratch, store):
                    COALESCE(e.original_bytes, m.original_bytes) AS original_bytes,
                    COALESCE(e.width, m.width) AS width,
                    COALESCE(e.height, m.height) AS height,
+                   COALESCE(e.media_type, m.media_type) AS media_type,
                    COALESCE(e.mime, m.mime) AS mime,
                    COALESCE(e.uploaded_at, m.uploaded_at) AS uploaded_at,
                    COALESCE(e.sha1_base36, m.sha1_base36) AS sha1_base36,
-                   CASE WHEN e.file_title IS NOT NULL THEN 'enwiki-local'
+                   CASE WHEN e.file_title IS NULL AND m.file_title IS NULL THEN 'missing'
+                        WHEN COALESCE(e.media_type, m.media_type, '') NOT IN ('BITMAP', 'DRAWING')
+                             THEN 'unsupported-media'
+                        WHEN e.file_title IS NOT NULL THEN 'enwiki-local'
                         WHEN m.file_title IS NOT NULL THEN 'commons'
                         ELSE 'missing' END AS status
             FROM read_parquet(?) c

@@ -3,9 +3,10 @@
 The dataflow app lives in `apps/Creational.Dataflow`. It is a .NET 10 Blazor
 Server control plane for the pinned `enwiki/2026-10-01` collection. The app
 lists target groups, explains why each is current or would run, lets an operator
-mark a group stale, and starts the import. The collection graph ends with OTT
-3.3 conversion and the investigative OTT–Wikipedia correlation. The image
-preview reads those outputs but does not copy originals; see
+mark a group stale, and starts the import. The collection graph includes OTT
+3.3 conversion, the investigative OTT–Wikipedia correlation, and dated
+Wikimedia image-metadata dumps. The image preview reads those outputs but
+does not copy image bytes; see
 [image preview operations](IMAGE_PREVIEW_OPERATIONS.md).
 
 The dashboard plan uses the last verified Table state for a quick preview.
@@ -67,8 +68,10 @@ are limited to one until measured otherwise. Live bytes are in a singleton
 memory ledger. Refreshing the page keeps the transfer visible, while an App
 Service restart abandons it. A later Import sees the incomplete Table attempt
 and can retry. A source Blob replacement is committed only after stream length
-and SHA-256 match. The commit uses the captured current ETag; after the new
-current Blob verifies, the exact old version ID is deleted. With Blob soft
+and the pinned source checksum match. Article dumps use SHA-256; the Wikimedia
+SQL image dumps publish SHA-1, and the copier computes SHA-256 for Blob
+verification while copying them. The commit uses the captured current ETag;
+after the new current Blob verifies, the exact old version ID is deleted. With Blob soft
 delete enabled, that version remains recoverable until retention expires.
 Deleting a previous Blob version through Microsoft Entra ID requires the
 `Storage Blob Data Owner` role or a custom role with
@@ -111,7 +114,9 @@ through every due target and its descendants.
 
 1. Verify-only and apply bootstrap, then run apply again and confirm zero newly
    adopted targets.
-2. Open `/collections/enwiki-2026-10-01`; confirm all 83 targets are current.
+2. Before enabling the image targets, confirm the 83 previously completed
+   targets still plan as current. The additive graph contains six new target
+   kinds and must not change legacy target IDs, recipes, or inputs.
 3. Do not use `Import collection` for a bounded single-target canary until a
    single-target action exists. A limit of 1 still permits later descendants
    and other due targets to run sequentially.
@@ -124,3 +129,25 @@ through every due target and its descendants.
 The control plane deploys from GitHub to App Service, and the worker image is
 published to public GHCR. A Container Apps Job should use an immutable image
 digest. Provisioning and live worker verification are separate from this code.
+
+The App Service's `ContainerJob__Image` setting must be changed to the new
+image digest after the worker-image workflow publishes it; publishing a GHCR
+tag alone does not update a pinned setting.
+
+## Image metadata targets
+
+`source-set` records the pinned article manifest and two dated SQL image dumps.
+The new copy targets use the official 2026-10-01 `dumpstatus.json` SHA-1 and
+length for `enwiki-20261001-image.sql.gz` and
+`commonswiki-20261001-image.sql.gz`. The files are about 88 MB and 18.6 GB
+compressed, respectively. Workers stream them into Snappy Parquet without an
+uncompressed disk copy. The English Wikipedia conversion retains its whole
+image table; the Commons conversion filters to parsed image-reference titles.
+The final resolution target gives a local English Wikipedia file precedence
+over the same filename on Commons, and records missing or non-image media.
+
+The SQL files contain **original** byte sizes. The gallery can show the known
+original-byte total for a branch after resolution, counting each file once.
+This is not a 330-pixel thumbnail transfer estimate. Actual thumbnail sizes
+can be recorded when thumbnail copying is added. These metadata targets do not
+download image bytes.

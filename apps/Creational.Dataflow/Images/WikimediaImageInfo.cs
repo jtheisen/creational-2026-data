@@ -33,15 +33,15 @@ public sealed class WikimediaImageInfo(HttpClient http, string? userAgent)
 
         foreach (var batch in missing.Chunk(10))
         {
-            var commons = await FetchAsync("commons.wikimedia.org", batch, ct);
-            var remaining = batch.Where(title => !commons.ContainsKey(Normalize(title))).ToArray();
-            var local = remaining.Length == 0
+            var local = await FetchAsync("en.wikipedia.org", batch, ct);
+            var remaining = batch.Where(title => !local.ContainsKey(Normalize(title))).ToArray();
+            var commons = remaining.Length == 0
                 ? new Dictionary<string, ImageMetadata>(StringComparer.OrdinalIgnoreCase)
-                : await FetchAsync("en.wikipedia.org", remaining, ct);
+                : await FetchAsync("commons.wikimedia.org", remaining, ct);
             foreach (var title in batch)
             {
                 var key = Normalize(title);
-                var data = commons.GetValueOrDefault(key) ?? local.GetValueOrDefault(key) ??
+                var data = local.GetValueOrDefault(key) ?? commons.GetValueOrDefault(key) ??
                     new ImageMetadata(title, null, null, null, null, null, null, null, true,
                         "File was not found on Commons or English Wikipedia, or metadata was unavailable.");
                 result[title] = data;
