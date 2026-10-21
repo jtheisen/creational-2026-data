@@ -35,6 +35,49 @@ public class WorkInputBuilderTests
         Assert.Equal(2, payload["InputFingerprints"]!.AsObject().Count);
     }
 
+    [Fact]
+    public async Task CommonsConverterReceivesPinnedDumpAndAllReferenceParquets()
+    {
+        var shards = new[] { new ManifestShard("p1", "enwiki-p1.xml.bz2", 1, "hash") };
+        var graph = October2026Collection.Build(shards);
+        var target = graph.Single(d => d.Id.Kind == "commons-image-metadata");
+        var dump = graph.Single(d => d.Id.Kind == "commons-image-dump").Id;
+        var parse = graph.Single(d => d.Id.Kind == "parse-shard").Id;
+        var states = new Dictionary<TargetId, TargetState>
+        {
+            [dump] = TargetState.Empty(dump) with { ManifestPath = "dump", Fingerprint = "dump-fingerprint" },
+            [parse] = TargetState.Empty(parse) with { ManifestPath = "parse", Fingerprint = "parse-fingerprint" }
+        };
+        var reader = new FixedReader(new Dictionary<string, OutputManifest>
+        {
+            ["dump"] = new(dump, "v1", [new(ImageDumpPins.Commons.FileName, "https://example.test/commons.gz", 5, new string('a', 64), "gzip-sql")], new Dictionary<string, string>()),
+            ["parse"] = new(parse, "v1", [new("image_references.parquet", "https://example.test/refs.parquet", 5, new string('b', 64), "parquet")], new Dictionary<string, string>())
+        });
+
+        var payload = await new WorkInputBuilder(reader, shards).BuildPayloadAsync(target, states, CancellationToken.None);
+
+        Assert.Equal("https://example.test/commons.gz", payload["dump"]!.GetValue<string>());
+        Assert.Equal("https://example.test/refs.parquet", payload["image_references"]!.AsArray().Single()!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task SourceSetRecordsArticleManifestAndBothImagePins()
+    {
+        var shards = new[] { new ManifestShard("p1", "enwiki-p1.xml.bz2", 1, "hash") };
+        var target = October2026Collection.Build(shards).Single(d => d.Id.Kind == "source-set");
+        var source = target.ContentDependencies.Single();
+        var states = new Dictionary<TargetId, TargetState>
+        { [source] = TargetState.Empty(source) with { ManifestPath = "source", Fingerprint = "article-source" } };
+        var reader = new FixedReader(new Dictionary<string, OutputManifest>
+        { ["source"] = new(source, "v1", [new("SHA256SUMS", "https://example.test/SHA256SUMS", 5, new string('a', 64), "text")], new Dictionary<string, string>()) });
+
+        var payload = await new WorkInputBuilder(reader, shards).BuildPayloadAsync(target, states, CancellationToken.None);
+
+        Assert.Equal("https://example.test/SHA256SUMS", payload["pins"]!["articleManifest"]!.GetValue<string>());
+        Assert.Equal(2, payload["pins"]!["imageDumps"]!.AsArray().Count);
+        Assert.Equal(ImageDumpPins.Commons.Sha1, payload["pins"]!["imageDumps"]![1]!["Sha1"]!.GetValue<string>());
+    }
+
     private sealed class FixedReader(IReadOnlyDictionary<string, OutputManifest> manifests) : IOutputManifestReader
     {
         public Task<OutputManifest> ReadAsync(string markerUri, CancellationToken ct) => Task.FromResult(manifests[markerUri]);

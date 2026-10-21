@@ -98,10 +98,32 @@ public sealed class WorkInputBuilder(IOutputManifestReader reader, IReadOnlyList
                     payload["ott_names"] = (await Artifact(Id("ott-names"), "taxonomy_names.parquet")).Path;
                     break;
                 }
+            case "source-set":
+                payload["pins"] = JsonSerializer.SerializeToNode(new
+                {
+                    articleManifest = (await Artifact(Id("source-manifest"), "SHA256SUMS")).Path,
+                    imageDumps = new[] { ImageDumpPins.Enwiki, ImageDumpPins.Commons }
+                });
+                break;
+            case "enwiki-image-metadata":
+                payload["dump"] = (await Artifact(Id("enwiki-image-dump"), ImageDumpPins.Enwiki.FileName)).Path;
+                break;
+            case "commons-image-metadata":
+                payload["dump"] = (await Artifact(Id("commons-image-dump"), ImageDumpPins.Commons.FileName)).Path;
+                payload["image_references"] = await ImageReferencesAsync();
+                break;
+            case "resolved-image-metadata":
+                payload["enwiki_metadata"] = (await Artifact(Id("enwiki-image-metadata"), "images.parquet")).Path;
+                payload["commons_metadata"] = (await Artifact(Id("commons-image-metadata"), "images.parquet")).Path;
+                payload["image_references"] = await ImageReferencesAsync();
+                break;
             default:
                 throw new InvalidOperationException($"{target.Id.Kind} is not a compute target");
         }
         return payload;
+
+        async Task<JsonArray> ImageReferencesAsync() => new((await Task.WhenAll(_shards.Keys.Order().Select(async key =>
+            (JsonNode?)JsonValue.Create((await Artifact(Id("parse-shard", key), "image_references.parquet")).Path)))).ToArray());
     }
 
     public async Task<string> PublishAsync(TargetDefinition target,

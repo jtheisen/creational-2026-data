@@ -68,6 +68,27 @@ public class TargetPlannerTests
         Assert.Equal(TargetDisposition.Run, plan[parse].Disposition);
     }
 
+    [Fact]
+    public void AddingImageTargetsKeepsRecordedLegacyWorkCurrent()
+    {
+        var (definitions, states, checks) = Fixture();
+        var newKinds = new HashSet<string> { "source-set", "enwiki-image-dump", "commons-image-dump",
+            "enwiki-image-metadata", "commons-image-metadata", "resolved-image-metadata" };
+        foreach (var target in definitions.Where(t => newKinds.Contains(t.Id.Kind)))
+        {
+            states.Remove(target.Id);
+            checks.Remove(target.Id);
+        }
+
+        var plan = new TargetPlanner().Plan(definitions, states, checks);
+
+        Assert.All(definitions.Where(t => !newKinds.Contains(t.Id.Kind)),
+            target => Assert.Equal(TargetDisposition.Current, plan[target.Id].Disposition));
+        Assert.Equal(TargetDisposition.Run, plan[definitions.Single(t => t.Id.Kind == "source-set").Id].Disposition);
+        Assert.All(definitions.Where(t => t.Id.Kind.EndsWith("-image-dump")),
+            target => Assert.Equal(TargetDisposition.Blocked, plan[target.Id].Disposition));
+    }
+
     private static (IReadOnlyList<TargetDefinition>, Dictionary<TargetId, TargetState>, Dictionary<TargetId, VerificationResult>) Fixture()
     {
         var graph = October2026Collection.Build([
