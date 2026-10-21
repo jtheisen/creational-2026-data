@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Azure;
+using Azure.Storage.Blobs.Models;
 using Azure.Storage.Queues;
 using Creational.Dataflow.Storage;
 using Creational.Dataflow.Targets;
@@ -227,6 +229,11 @@ public sealed class CollectionImportEngine(
         try
         {
             await repository.BeginAttemptAsync(id, attempt, current.StaleRevision, ct);
+            if (id.Kind is "enwiki-image-dump" or "commons-image-dump")
+            {
+                await ProcessImageDumpCopyAsync(definition, initialStates, current, attempt, ct);
+                return;
+            }
             var source = await CopySourceAsync(definition, current, ct);
             var copyResult = await copies.EnqueueAsync(source, ct);
             if (copyResult.CleanupError is { Length: > 0 } warning)
@@ -254,6 +261,43 @@ public sealed class CollectionImportEngine(
         {
             _activeCopyAttempts.TryRemove(id, out _);
         }
+    }
+
+    private async Task ProcessImageDumpCopyAsync(TargetDefinition definition,
+        IReadOnlyDictionary<TargetId, TargetState> initialStates, TargetState current, string attempt, CancellationToken ct)
+    {
+        var pin = ImageDumpPins.For(definition.Id.Kind);
+        string? oldVersion = null;
+        string? oldETag = null;
+        try
+        {
+            var properties = await blobs.Client(pin.BlobUrl).GetPropertiesAsync(cancellationToken: ct);
+            oldVersion = properties.Value.VersionId;
+            oldETag = properties.Value.ETag.ToString();
+            if (oldVersion is null && !configuration.GetValue("Copies:VersioningEnabled", false))
+                throw new InvalidOperationException("Confirm Blob versioning before replacing a dump");
+        }
+        catch (RequestFailedException error) when (error.Status == 404) { }
+        var copy = await copies.EnqueueAsync(new CopyTarget(definition.Id, pin.SourceUrl, pin.BlobUrl,
+            pin.Length, "", oldVersion, oldETag) { ExpectedSha1 = pin.Sha1 }, ct);
+        var inputs = definition.ContentDependencies.ToDictionary(dep => dep.ToString(),
+            dep => initialStates[dep].Fingerprint ?? throw new InvalidDataException($"Missing dependency {dep}"));
+        var manifest = ImageDumpPins.OutputManifest(definition.Id, definition.RecipeVersion, copy, inputs);
+        var marker = AttemptOutputPrefix(definition.Id, attempt) + "_COMPLETE.json";
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(manifest);
+        await using (var stream = new MemoryStream(bytes))
+            await blobs.Client(marker).UploadAsync(stream, new BlobUploadOptions
+            {
+                Conditions = new BlobRequestConditions { IfNoneMatch = ETag.All },
+                Metadata = new Dictionary<string, string>
+                { ["sha256"] = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant() },
+                HttpHeaders = new BlobHttpHeaders { ContentType = "application/json" }
+            }, ct);
+        var check = await verifier.VerifyAsync(manifest, ct);
+        if (!check.Valid) throw new InvalidDataException(check.Error);
+        await repository.CompleteAttemptAsync(definition.Id, attempt, current.StaleRevision,
+            marker, check.Fingerprint!, definition.RecipeVersion, inputs, ct, copy.CleanupError);
+        _verificationCache.TryRemove(definition.Id, out _);
     }
 
     private async Task<CopyTarget> CopySourceAsync(TargetDefinition definition, TargetState state, CancellationToken ct)
@@ -291,5 +335,6 @@ public sealed class CollectionImportEngine(
     public static string AttemptOutputPrefix(TargetId id, string attempt) =>
         $"https://creational.blob.core.windows.net/wikimedia-extracts/{id.Collection}/attempts/{Uri.EscapeDataString(id.Kind)}/{Uri.EscapeDataString(id.Key)}/{Uri.EscapeDataString(attempt)}/";
 
-    private static bool IsCopyTarget(string kind) => kind is "source-manifest" or "dump-shard" or "ott-source";
+    private static bool IsCopyTarget(string kind) => kind is "source-manifest" or "dump-shard" or "ott-source"
+        or "enwiki-image-dump" or "commons-image-dump";
 }

@@ -6,7 +6,10 @@ using Creational.Dataflow.Targets;
 namespace Creational.Dataflow.Transfers;
 
 public sealed record CopyTarget(TargetId Id, string SourceUrl, string Destination,
-    long ExpectedLength, string ExpectedSha256, string? OldVersionId, string? OldETag = null);
+    long ExpectedLength, string ExpectedSha256, string? OldVersionId, string? OldETag = null)
+{
+    public string? ExpectedSha1 { get; init; }
+}
 
 public sealed record CopyResult(bool Success, long Bytes, string Sha256, string? CleanupError);
 
@@ -36,6 +39,7 @@ public sealed class StreamingBlobCopier(HttpClient http, IBlockBlobWriter blobs,
             using var response = await GetWithRetryAsync(target.SourceUrl, cancellationToken);
             await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            using var sha1Digest = target.ExpectedSha1 is null ? null : IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
             var blocks = new List<string>();
             var session = Guid.NewGuid().ToString("N");
             var buffer = ArrayPool<byte>.Shared.Rent(blockSize);
@@ -53,6 +57,7 @@ public sealed class StreamingBlobCopier(HttpClient http, IBlockBlobWriter blobs,
                     }
                     if (count == 0) break;
                     digest.AppendData(buffer, 0, count);
+                    sha1Digest?.AppendData(buffer, 0, count);
                     var blockId = Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes($"{session}-{blocks.Count:D8}"));
                     await blobs.StageAsync(target.Destination, blockId, buffer, count, cancellationToken);
                     blocks.Add(blockId);
@@ -65,8 +70,12 @@ public sealed class StreamingBlobCopier(HttpClient http, IBlockBlobWriter blobs,
                 ArrayPool<byte>.Shared.Return(buffer);
             }
             var sha256 = Convert.ToHexString(digest.GetHashAndReset()).ToLowerInvariant();
-            if (bytes != target.ExpectedLength || !string.Equals(sha256, target.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException($"Source length or SHA-256 mismatch for {target.Id}");
+            var sha1 = sha1Digest is null ? null : Convert.ToHexString(sha1Digest.GetHashAndReset()).ToLowerInvariant();
+            if (bytes != target.ExpectedLength ||
+                (target.ExpectedSha256.Length > 0 && !string.Equals(sha256, target.ExpectedSha256, StringComparison.OrdinalIgnoreCase)) ||
+                (target.ExpectedSha1 is not null && !string.Equals(sha1, target.ExpectedSha1, StringComparison.OrdinalIgnoreCase)) ||
+                (target.ExpectedSha256.Length == 0 && target.ExpectedSha1 is null))
+                throw new InvalidDataException($"Source length or checksum mismatch for {target.Id}");
             await blobs.CommitAsync(target.Destination, blocks, bytes, sha256, target.OldETag, cancellationToken);
             if (!await blobs.VerifyAsync(target.Destination, bytes, sha256, cancellationToken))
                 throw new InvalidDataException($"Committed Blob verification failed for {target.Id}");

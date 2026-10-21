@@ -43,6 +43,20 @@ public static class October2026Collection
         result.Add(Define("ott-correlation", "all", "ott-wikipedia-correlation-v3",
             [Id("parse-finalize"), Id("ott-names")],
             ["wiki_names.parquet", "exact_matches.parquet", "match_status.parquet", "near_name_candidates.parquet", "report.json"]));
+        result.Add(Define("source-set", "all", "image-sources-v1",
+            [Id("source-manifest")], ["pins.json"]));
+        result.Add(Define("enwiki-image-dump", "all", "2026-10-01",
+            [Id("source-set")], [ImageDumpPins.Enwiki.FileName]));
+        result.Add(Define("commons-image-dump", "all", "2026-10-01",
+            [Id("source-set")], [ImageDumpPins.Commons.FileName]));
+        result.Add(Define("enwiki-image-metadata", "all", "image-sql-v1",
+            [Id("enwiki-image-dump")], ["images.parquet", "report.json"]));
+        result.Add(Define("commons-image-metadata", "all", "image-sql-v1",
+            [Id("commons-image-dump"), ..shards.Select(s => Id("parse-shard", s.Key))],
+            ["images.parquet", "report.json"]));
+        result.Add(Define("resolved-image-metadata", "all", "image-resolution-v1",
+            [Id("enwiki-image-metadata"), Id("commons-image-metadata"), ..shards.Select(s => Id("parse-shard", s.Key))],
+            ["resolved_images.parquet", "report.json"]));
         return result;
     }
 }

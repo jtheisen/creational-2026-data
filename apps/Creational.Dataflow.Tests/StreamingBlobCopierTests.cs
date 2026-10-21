@@ -22,6 +22,34 @@ public class StreamingBlobCopierTests
     }
 
     [Fact]
+    public async Task OfficialSha1PinIsVerifiedWhileSha256IsRecorded()
+    {
+        var writer = new FakeWriter();
+        var copier = NewCopier(writer, _ => new HttpResponseMessage(HttpStatusCode.OK)
+        { Content = new StringContent("hello") });
+        var target = CopyTarget("", 5, null) with
+        { ExpectedSha1 = Convert.ToHexString(SHA1.HashData(Encoding.UTF8.GetBytes("hello"))).ToLowerInvariant() };
+
+        var result = await copier.CopyAsync(target, CancellationToken.None);
+
+        Assert.True(writer.Committed);
+        Assert.Equal(Hash("hello"), result.Sha256);
+    }
+
+    [Fact]
+    public async Task Sha1MismatchDoesNotCommit()
+    {
+        var writer = new FakeWriter();
+        var copier = NewCopier(writer, _ => new HttpResponseMessage(HttpStatusCode.OK)
+        { Content = new StringContent("hello") });
+        var target = CopyTarget("", 5, null) with { ExpectedSha1 = new string('0', 40) };
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => copier.CopyAsync(target, CancellationToken.None));
+
+        Assert.False(writer.Committed);
+    }
+
+    [Fact]
     public async Task VerifiedReplacementDeletesOnlyCapturedOldVersion()
     {
         var writer = new FakeWriter();
