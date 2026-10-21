@@ -5,7 +5,8 @@ Status: design agreed in conversation, 2026-10-21.
 ## Purpose
 
 Import file metadata independently of original image bytes so the dashboard can
-estimate original-byte totals for an English Wikipedia article or OTT subtree.
+report original-byte totals and later estimate 330-pixel thumbnail transfer
+sizes for an English Wikipedia article or OTT subtree.
 The existing parsed `image_references.parquet` files supply candidate titles;
 the preview currently resolves metadata only for its visible page and cannot
 calculate complete totals. This stage does not copy image originals or make a
@@ -88,6 +89,12 @@ be added blindly to obtain a parent total because a file can appear in
 multiple branches. The OTT-to-Wikipedia correlation is still investigative,
 so subtree coverage is a property of the current correlation, not proof that
 every lifeform page has been found.
+
+The SQL dump's `img_size` describes the original, not a thumbnail. Do not
+present it as the cost of a 330-pixel thumbnail import. The eventual thumbnail
+copy workflow may estimate bytes from a measured sample before copying and
+replace the estimate with actual transferred Blob lengths afterward. The
+metadata pipeline does not generate or copy thumbnails.
 
 ## Storage boundaries and validation
 

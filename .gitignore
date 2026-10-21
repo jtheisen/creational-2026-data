@@ -7,6 +7,7 @@ pat.txt
 .env
 .env.*
 .superpowers/
+.worktrees/
 data/
 results/
 apps/**/bin/
