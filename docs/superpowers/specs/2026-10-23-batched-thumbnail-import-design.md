@@ -6,7 +6,7 @@ An operator viewing an OTT subtree or Wikipedia page can schedule more than the 
 
 ## Behavior
 
-- The preview offers a count (default 100, maximum 1,000) and schedules that many candidate files starting at the current preview page. The visible-page button remains available.
+- The preview offers a count (default 100, maximum 1,000) and an exact starting image, initially the current preview page's first image. The visible-page button remains available.
 - A batch record persists the parsed selection, starting offset, requested count, and cursor. The hosted service creates deterministic child jobs of at most 24 titles, processes them serially, and advances the cursor. It can resume planning and copying after restart without duplicating child jobs.
 - The image-jobs index lists batches and standalone jobs, newest first. A batch page shows its progress and links to its child jobs. The existing job page links back to the index.
 - Batch scheduling only reads the catalog. A scheduled batch can take hours to copy at the current Wikimedia pace; navigating away does not stop it.

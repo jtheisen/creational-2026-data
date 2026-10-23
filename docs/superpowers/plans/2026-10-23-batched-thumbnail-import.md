@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Default 100, maximum 1,000 images per scheduling action.
-- Start at the current preview page; preserve its parsed selection and offset.
+- Prefill the current preview page's first image but allow an exact starting image; preserve the parsed selection and offset.
 - A child job contains at most 24 titles and reuses the existing copier.
 - Persist intent before background planning and use deterministic child IDs.
 - Keep collection DAG targets and curation unchanged.

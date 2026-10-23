@@ -10,8 +10,8 @@ files. Once `resolved-image-metadata` completes, it also shows the selected
 branch's known original-byte total and counts of resolved, missing, and
 non-image media, and ambiguous filenames. The preview itself only links to
 Wikimedia; its page import button queues up to the 24 currently visible images
-as 250px thumbnails. The batch control schedules 1–1,000 images starting at
-the current preview page (default 100). A persisted cursor creates child jobs
+as 250px thumbnails. The batch control schedules 1–1,000 images (default 100)
+from an editable starting image, initially set to the current preview page. A persisted cursor creates child jobs
 of up to 24 images and resumes after a restart. The `/image-jobs` page lists
 past and current batches and individual jobs. See [collection import operations](COLLECTION_IMPORT_OPERATIONS.md#first-thumbnail-import)
 for job and Blob details.
