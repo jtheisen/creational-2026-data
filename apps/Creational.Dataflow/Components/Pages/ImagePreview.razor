@@ -2,6 +2,8 @@
 @using Creational.Dataflow.Images
 @inject ImageCatalog Catalog
 @inject WikimediaImageInfo Metadata
+@inject ThumbnailImportService ThumbnailImports
+@inject NavigationManager Navigation
 
 <MudStack Spacing="3">
     <MudBreadcrumbs Items="_breadcrumbs" />
@@ -65,6 +67,12 @@
         }
         else
         {
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_loading || _importing || _page.Items.Count == 0)" OnClick="ImportVisibleAsync">
+                    @(_importing ? "Starting import…" : $"Import these {_page.Items.Count} thumbnails at 250px")
+                </MudButton>
+                <MudText Typo="Typo.caption">Only the images on this preview page will be queued.</MudText>
+            </MudStack>
             <MudGrid Spacing="2">
                 @foreach (var candidate in _page.Items)
                 {
@@ -129,6 +137,7 @@
     private string? _error;
     private string? _metadataError;
     private bool _loading;
+    private bool _importing;
     private int _pageNumber = 1;
     private readonly List<BreadcrumbItem> _breadcrumbs =
         [new("Collections", "/"), new("Image preview", null, true)];
@@ -170,4 +179,19 @@
 
     private static string ArticleUrl(string title) =>
         "https://en.wikipedia.org/wiki/" + Uri.EscapeDataString(title.Replace(' ', '_'));
+
+    private async Task ImportVisibleAsync()
+    {
+        if (_page is null || _importing) return;
+        _importing = true;
+        _error = null;
+        try
+        {
+            var id = await ThumbnailImports.CreateJobAsync(
+                _page.Items.Select(x => x.FileTitle).ToArray(), CancellationToken.None);
+            Navigation.NavigateTo($"/image-jobs/{id}");
+        }
+        catch (Exception error) { _error = error.Message; }
+        finally { _importing = false; }
+    }
 }

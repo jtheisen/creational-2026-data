@@ -8,7 +8,10 @@ links, and galleries. It counts unresolved markup separately. It fetches
 Wikimedia `imageinfo` thumbnail and license metadata only for the visible 24
 files. Once `resolved-image-metadata` completes, it also shows the selected
 branch's known original-byte total and counts of resolved, missing, and
-non-image media, and ambiguous filenames. No image bytes are copied.
+non-image media, and ambiguous filenames. The preview itself only links to
+Wikimedia; its explicit import button queues up to the 24 currently visible
+images as 250px thumbnails. See [collection import operations](COLLECTION_IMPORT_OPERATIONS.md#first-thumbnail-import)
+for job and Blob details.
 
 On first use after an App Service process restart, the control plane downloads
 the compact OTT hierarchy, exact matches, and the 19 parsed article/image

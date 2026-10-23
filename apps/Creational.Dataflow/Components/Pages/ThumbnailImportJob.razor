@@ -1,0 +1,89 @@
+@page "/image-jobs/{Id}"
+@implements IAsyncDisposable
+@using Creational.Dataflow.Images
+@inject ThumbnailImportService Imports
+
+<MudStack Spacing="3">
+    <MudBreadcrumbs Items="_breadcrumbs" />
+    <MudText Typo="Typo.h4">Thumbnail import</MudText>
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error">@_error</MudAlert>
+    }
+    else if (_job is null)
+    {
+        <MudProgressCircular Indeterminate="true" />
+    }
+    else
+    {
+        <MudPaper Class="pa-4">
+            <MudText>Status: @_job.Status · @_completed of @_job.Titles.Length complete · @_bytes.ToString("N0") bytes copied</MudText>
+            <MudText Typo="Typo.caption">Requested width: @_job.Width px. Each image is tracked separately and unfinished work resumes after restart.</MudText>
+        </MudPaper>
+        <MudTable Items="_rows" Dense="true" Hover="true">
+            <HeaderContent><MudTh>File</MudTh><MudTh>State</MudTh><MudTh>Bytes</MudTh><MudTh>Details</MudTh></HeaderContent>
+            <RowTemplate>
+                <MudTd DataLabel="File">@context.Title</MudTd>
+                <MudTd DataLabel="State">@context.Status</MudTd>
+                <MudTd DataLabel="Bytes">@context.Bytes?.ToString("N0")</MudTd>
+                <MudTd DataLabel="Details">@context.Error</MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudStack>
+
+@code {
+    [Parameter] public string Id { get; set; } = "";
+    private Creational.Dataflow.Images.ThumbnailImportJob? _job;
+    private List<ThumbnailRendition> _rows = [];
+    private string? _error;
+    private int _completed;
+    private long _bytes;
+    private CancellationTokenSource? _stop;
+    private readonly List<BreadcrumbItem> _breadcrumbs =
+        [new("Collections", "/"), new("Image preview", "/images"), new("Import", null, true)];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _stop = new CancellationTokenSource();
+        await RefreshAsync(_stop.Token);
+        _ = PollAsync(_stop.Token);
+    }
+
+    private async Task PollAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), ct);
+                await InvokeAsync(async () => { await RefreshAsync(ct); StateHasChanged(); });
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
+    private async Task RefreshAsync(CancellationToken ct)
+    {
+        try
+        {
+            _job = await Imports.GetJobAsync(Id, ct);
+            if (_job is null) { _error = "Import job was not found."; return; }
+            var renditions = await Imports.GetRenditionsAsync(_job, ct);
+            _rows = _job.Titles.Select((title, index) => renditions[index] ??
+                new ThumbnailRendition("", title, _job.Width, "", "pending")).ToList();
+            _completed = _rows.Count(x => x.Status == "complete");
+            _bytes = _rows.Where(x => x.Status == "complete").Sum(x => x.Bytes ?? 0);
+            _error = null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception error) { _error = error.Message; }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _stop?.Cancel();
+        _stop?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

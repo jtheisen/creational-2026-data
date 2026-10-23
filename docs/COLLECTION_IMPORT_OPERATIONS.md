@@ -5,9 +5,39 @@ Server control plane for the pinned `enwiki/2026-10-01` collection. The app
 lists target groups, explains why each is current or would run, lets an operator
 mark a group stale, and starts the import. The collection graph includes OTT
 3.3 conversion, the investigative OTT–Wikipedia correlation, and dated
-Wikimedia image-metadata dumps. The image preview reads those outputs but
-does not copy image bytes; see
+Wikimedia image-metadata dumps. The image preview reads those outputs and can
+start a bounded 250px thumbnail import for its current page; see
 [image preview operations](IMAGE_PREVIEW_OPERATIONS.md).
+
+## First thumbnail import
+
+The image preview's import button snapshots at most 24 visible file titles
+into a job row in `CollectionTargets`. The hosted thumbnail importer processes
+one file at a time and resumes pending or running jobs after an App Service
+restart. Asset rows are neutral (`unreviewed`); width-specific rendition rows
+record source URL, Blob path, bytes, SHA-256, and per-file errors. These rows
+are separate from the collection dependency graph. The job page shows each
+file's state and the completed byte total. The shared Wikimedia request pacer
+starts at one request per second and backs off on 429/503.
+
+The Blob path is `thumbnails/250px/<hash-prefix>/<title-hash>/<filename>` in
+`wikimedia-extracts`. A verified current rendition is skipped by later jobs.
+When a rendition is marked stale, a replacement is uploaded and verified before
+the prior version is deleted under Blob soft-delete retention. That exact-version
+delete requires `Storage Blob Data Owner` on the container; the App Service
+identity has this role. This first slice does not yet expose a stale toggle or
+bulk subtree import.
+
+For a one-file operational canary from a machine with Azure CLI data roles:
+
+```sh
+AZURE_TOKEN_CREDENTIALS=AzureCliCredential dotnet run --project apps/Creational.Dataflow -- --import-thumbnail-once 'File:Cat - 03.jpg'
+```
+
+On 2026-10-23, the canary copied the Commons image as an 18,311-byte
+`image/jpeg` Blob with SHA-256
+`c2842946387735f4ebb2d33b8951edcf127594a33a746f523e86187c075a396f`.
+A second one-file job completed without changing the Blob ETag or version ID.
 
 The dashboard plan uses the last verified Table state for a quick preview.
 Import rechecks the referenced Blob groups before it queues any work. This is

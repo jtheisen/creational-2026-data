@@ -52,6 +52,26 @@ public class WikimediaImageInfoTests
         Assert.Equal(2, handler.RequestCount);
     }
 
+    [Fact]
+    public async Task DifferentWidthsUseDifferentMetadataRequests()
+    {
+        var widths = new List<string>();
+        var handler = new StubHandler(request =>
+        {
+            widths.Add(request.RequestUri!.Query);
+            return """{"query":{"pages":{"1":{"title":"File:Bird.jpg","imageinfo":[{"thumburl":"https://upload.wikimedia.org/bird.jpg"}]}}}}""";
+        });
+        using var http = new HttpClient(handler);
+        var lookup = new WikimediaImageInfo(http, "CreationalDataflow/1.0 (contact: test@example.org)");
+
+        await lookup.ResolveAsync(["File:Bird.jpg"], 250, CancellationToken.None);
+        await lookup.ResolveAsync(["File:Bird.jpg"], 320, CancellationToken.None);
+
+        Assert.Equal(2, handler.RequestCount);
+        Assert.Contains("iiurlwidth=250", widths[0]);
+        Assert.Contains("iiurlwidth=320", widths[1]);
+    }
+
     private sealed class StubHandler(Func<HttpRequestMessage, string> response) : HttpMessageHandler
     {
         public int RequestCount { get; private set; }

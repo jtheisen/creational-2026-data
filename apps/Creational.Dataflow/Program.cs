@@ -44,6 +44,25 @@ if (args.Length == 2 && args[0] == "--adopt-existing" && args[1] is "--verify-on
     return;
 }
 
+if (args.Length == 2 && args[0] == "--import-thumbnail-once")
+{
+    var tableService = new TableServiceClient(new Uri(accountUrl.Replace(".blob.", ".table.", StringComparison.OrdinalIgnoreCase)), credential);
+    var repository = new ThumbnailImportRepository(tableService.GetTableClient("CollectionTargets"));
+    var userAgent = Environment.GetEnvironmentVariable("Copies__UserAgent") ??
+        "CreationalDataflow/1.0 (https://github.com/jtheisen/creational-2026-data)";
+    var pacer = new WikimediaRequestPacer();
+    using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+    http.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
+    var service = new ThumbnailImportService(repository, new ThumbnailBlobCopier(http, blobService, pacer),
+        new WikimediaImageInfo(http, userAgent, pacer),
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<ThumbnailImportService>.Instance);
+    var id = await service.CreateJobAsync([args[1]], CancellationToken.None);
+    await service.ProcessPendingAsync(CancellationToken.None);
+    Console.WriteLine(JsonSerializer.Serialize(new { id, job = await service.GetJobAsync(id, CancellationToken.None),
+        renditions = await service.GetRenditionsAsync((await service.GetJobAsync(id, CancellationToken.None))!, CancellationToken.None) }));
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddMudServices();
@@ -71,8 +90,20 @@ builder.Services.AddSingleton(queueClient);
 builder.Services.AddSingleton<TransferLedger>();
 builder.Services.AddSingleton<IBlockBlobWriter, AzureBlockBlobWriter>();
 var copyUserAgent = builder.Configuration["Copies:UserAgent"];
-builder.Services.AddSingleton(_ => new WikimediaImageInfo(new HttpClient(), copyUserAgent ??
-    "CreationalDataflow/1.0 (https://github.com/jtheisen/creational-2026-data)"));
+builder.Services.AddSingleton<WikimediaRequestPacer>();
+builder.Services.AddSingleton(sp => new WikimediaImageInfo(new HttpClient(), copyUserAgent ??
+    "CreationalDataflow/1.0 (https://github.com/jtheisen/creational-2026-data)",
+    sp.GetRequiredService<WikimediaRequestPacer>()));
+builder.Services.AddSingleton<IThumbnailImportRepository, ThumbnailImportRepository>();
+builder.Services.AddSingleton<IThumbnailBlobCopier>(sp =>
+{
+    var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+    http.DefaultRequestHeaders.UserAgent.ParseAdd(copyUserAgent ??
+        "CreationalDataflow/1.0 (https://github.com/jtheisen/creational-2026-data)");
+    return new ThumbnailBlobCopier(http, blobService, sp.GetRequiredService<WikimediaRequestPacer>());
+});
+builder.Services.AddSingleton<ThumbnailImportService>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ThumbnailImportService>());
 builder.Services.AddSingleton<IStreamingCopier>(sp =>
 {
     if (string.IsNullOrWhiteSpace(copyUserAgent))

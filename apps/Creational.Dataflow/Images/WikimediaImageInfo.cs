@@ -9,18 +9,22 @@ public sealed record ImageMetadata(string FileTitle, string? ThumbnailUrl, strin
     string? OriginalUrl, long? OriginalBytes, string? License, string? LicenseUrl,
     string? Attribution, bool NeedsRightsReview, string? Error);
 
-public sealed class WikimediaImageInfo(HttpClient http, string? userAgent)
+public sealed class WikimediaImageInfo(HttpClient http, string? userAgent, WikimediaRequestPacer? pacer = null)
 {
     private readonly ConcurrentDictionary<string, (ImageMetadata Data, DateTimeOffset Until)> _cache =
         new(StringComparer.Ordinal);
 
     public async Task<IReadOnlyDictionary<string, ImageMetadata>> ResolveAsync(
-        IReadOnlyList<string> titles, CancellationToken ct)
+        IReadOnlyList<string> titles, CancellationToken ct) => await ResolveAsync(titles, 320, ct);
+
+    public async Task<IReadOnlyDictionary<string, ImageMetadata>> ResolveAsync(
+        IReadOnlyList<string> titles, int width, CancellationToken ct)
     {
+        if (width is < 1 or > 2048) throw new ArgumentOutOfRangeException(nameof(width));
         var result = new Dictionary<string, ImageMetadata>(StringComparer.Ordinal);
         var missing = titles.Distinct(StringComparer.Ordinal).Where(title =>
         {
-            if (_cache.TryGetValue(title, out var cached) && cached.Until > DateTimeOffset.UtcNow)
+            if (_cache.TryGetValue($"{width}:{title}", out var cached) && cached.Until > DateTimeOffset.UtcNow)
             {
                 result[title] = cached.Data;
                 return false;
@@ -33,11 +37,11 @@ public sealed class WikimediaImageInfo(HttpClient http, string? userAgent)
 
         foreach (var batch in missing.Chunk(10))
         {
-            var local = await FetchAsync("en.wikipedia.org", batch, ct);
+            var local = await FetchAsync("en.wikipedia.org", batch, width, ct);
             var remaining = batch.Where(title => !local.ContainsKey(Normalize(title))).ToArray();
             var commons = remaining.Length == 0
                 ? new Dictionary<string, ImageMetadata>(StringComparer.Ordinal)
-                : await FetchAsync("commons.wikimedia.org", remaining, ct);
+                : await FetchAsync("commons.wikimedia.org", remaining, width, ct);
             foreach (var title in batch)
             {
                 var key = Normalize(title);
@@ -45,23 +49,26 @@ public sealed class WikimediaImageInfo(HttpClient http, string? userAgent)
                     new ImageMetadata(title, null, null, null, null, null, null, null, true,
                         "File was not found on Commons or English Wikipedia, or metadata was unavailable.");
                 result[title] = data;
-                _cache[title] = (data, DateTimeOffset.UtcNow.AddHours(12));
+                _cache[$"{width}:{title}"] = (data, DateTimeOffset.UtcNow.AddHours(12));
             }
         }
         return result;
     }
 
     private async Task<Dictionary<string, ImageMetadata>> FetchAsync(string host,
-        IReadOnlyList<string> titles, CancellationToken ct)
+        IReadOnlyList<string> titles, int width, CancellationToken ct)
     {
         var result = new Dictionary<string, ImageMetadata>(StringComparer.Ordinal);
         var url = $"https://{host}/w/api.php?action=query&format=json&prop=imageinfo" +
-            "&iiprop=url%7Csize%7Cextmetadata&iiurlwidth=320" +
+            $"&iiprop=url%7Csize%7Cextmetadata&iiurlwidth={width}" +
             "&iiextmetadatafilter=LicenseShortName%7CLicenseUrl%7CArtist%7CCredit" +
             "&titles=" + Uri.EscapeDataString(string.Join('|', titles));
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.UserAgent.ParseAdd(userAgent);
+        if (pacer is not null) await pacer.WaitAsync(ct);
         using var response = await http.SendAsync(request, ct);
+        if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+            throw new WikimediaThrottledException(response.Headers.RetryAfter?.Delta ?? TimeSpan.FromMinutes(1));
         response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var json = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
