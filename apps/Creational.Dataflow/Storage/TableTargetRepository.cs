@@ -15,7 +15,10 @@ public sealed class TableTargetRepository(TableClient table) : ITargetRepository
         var states = new Dictionary<TargetId, TargetState>();
         try
         {
-            await foreach (var entity in table.QueryAsync<TableEntity>(e => e.PartitionKey == Partition(collection), cancellationToken: cancellationToken))
+            var partition = Partition(collection).Replace("'", "''", StringComparison.Ordinal);
+            // The SDK's expression binder fails under the App Service runtime's compilation settings.
+            await foreach (var entity in table.QueryAsync<TableEntity>(filter: $"PartitionKey eq '{partition}'",
+                cancellationToken: cancellationToken))
             {
                 var state = Decode(entity, collection);
                 states[state.Id] = state;

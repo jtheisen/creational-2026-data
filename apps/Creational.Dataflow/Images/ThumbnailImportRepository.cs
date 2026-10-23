@@ -33,7 +33,8 @@ public sealed class ThumbnailImportRepository(TableClient table) : IThumbnailImp
     public async Task<IReadOnlyList<ThumbnailImportJob>> ListIncompleteJobsAsync(CancellationToken ct)
     {
         var result = new List<ThumbnailImportJob>();
-        await foreach (var row in table.QueryAsync<TableEntity>(x => x.PartitionKey == Jobs,
+        // Use an OData filter; expression binding fails in the deployed App Service runtime.
+        await foreach (var row in table.QueryAsync<TableEntity>(filter: "PartitionKey eq '__thumbnail_jobs'",
             cancellationToken: ct))
         {
             var job = ReadJob(row);
