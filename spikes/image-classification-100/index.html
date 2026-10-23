@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Image classification sample · Creational</title>
+  <style>
+    :root { font: 15px/1.45 system-ui, sans-serif; color: #213047; background: #f5f7fa; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header { background: #fff; border-bottom: 1px solid #dbe1e8; padding: 1.5rem max(1.5rem, calc((100vw - 1380px) / 2)); }
+    h1 { margin: 0 0 .35rem; font-size: 1.65rem; }
+    h2 { font-size: 1.1rem; margin: 0; }
+    p { margin: .4rem 0; }
+    main { max-width: 1450px; padding: 1.5rem; margin: auto; }
+    .muted { color: #52647b; }
+    .legend, .toolbar, .summary { display: flex; flex-wrap: wrap; gap: .75rem 1.5rem; align-items: center; }
+    .legend { margin-top: .8rem; }
+    .summary { margin-bottom: 1rem; }
+    .summary span { background: #fff; border: 1px solid #dbe1e8; border-radius: .7rem; padding: .45rem .7rem; }
+    .toolbar { background: #fff; border: 1px solid #dbe1e8; border-radius: .8rem; padding: .8rem; margin-bottom: 1rem; }
+    label { display: inline-flex; gap: .4rem; align-items: center; }
+    input[type="search"], select { font: inherit; padding: .45rem .55rem; border: 1px solid #aebaca; border-radius: .4rem; background: #fff; }
+    input[type="search"] { min-width: 18rem; }
+    .table-scroll { overflow-x: auto; background: #fff; border: 1px solid #dbe1e8; border-radius: .8rem; }
+    table { border-collapse: collapse; width: 100%; min-width: 1050px; }
+    th, td { padding: .85rem; border-bottom: 1px solid #e4e8ed; text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; z-index: 2; background: #e9eef4; white-space: nowrap; }
+    tr:last-child td { border-bottom: 0; }
+    tr:hover td { background: #f9fbfd; }
+    td:first-child { font-variant-numeric: tabular-nums; color: #52647b; }
+    .image-button { display: inline-block; padding: 0; border: 0; background: transparent; cursor: zoom-in; }
+    .image-frame { display: inline-block; position: relative; line-height: 0; max-width: 250px; }
+    .image-frame img { display: block; max-width: 250px; max-height: 340px; height: auto; width: auto; }
+    .marker { position: absolute; transform: translate(-50%, -50%); display: grid; place-items: center; width: 23px; height: 23px; border: 2px solid #fff; border-radius: 50%; color: #fff; font: 700 12px/1 system-ui, sans-serif; box-shadow: 0 1px 4px #0009; pointer-events: none; }
+    .luna { background: #1269c7; }
+    .sol { background: #d33d31; }
+    .marker-key { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; color: #fff; font-weight: 700; font-size: .75rem; }
+    .filename { display: block; max-width: 270px; overflow-wrap: anywhere; margin-top: .35rem; font-size: .83rem; }
+    .filename a { color: #135998; }
+    .model-result { min-width: 250px; }
+    .facts { display: grid; grid-template-columns: 6.6rem 1fr; gap: .12rem .4rem; font-size: .9rem; }
+    .facts dt { color: #607087; }
+    .facts dd { margin: 0; }
+    .model-result p { font-size: .86rem; color: #52647b; margin-top: .55rem; }
+    .flag { display: inline-block; padding: .18rem .45rem; border-radius: .3rem; background: #eef1f5; font-size: .8rem; margin: 0 .3rem .3rem 0; }
+    .flag.warn { background: #fff0d5; color: #754700; }
+    dialog { border: 0; border-radius: .9rem; box-shadow: 0 15px 50px #0005; max-width: min(95vw, 920px); max-height: 95vh; }
+    dialog::backdrop { background: #152034a8; }
+    .dialog-top { display: flex; justify-content: space-between; gap: 1rem; align-items: center; margin-bottom: 1rem; }
+    .dialog-top button { font: inherit; padding: .4rem .65rem; }
+    .dialog-image { text-align: center; }
+    .dialog-image .image-frame { max-width: min(80vw, 780px); }
+    .dialog-image img { max-width: min(80vw, 780px); max-height: 75vh; }
+    @media (max-width: 700px) { main { padding: .7rem; } header { padding: 1rem; } input[type="search"] { min-width: 9rem; width: 100%; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Image classification sample</h1>
+    <p class="muted">100 existing Wikimedia thumbnails, independently inspected by Codex Luna and Sol agents. This is a qualitative test, not a direct API benchmark.</p>
+    <div class="legend"><span><span class="marker-key luna">L</span> Luna head</span><span><span class="marker-key sol">S</span> Sol head</span><span class="muted">No marker means the model did not identify a visible head. Click an image to enlarge it.</span></div>
+  </header>
+  <main>
+    <div class="summary" id="summary"></div>
+    <div class="toolbar">
+      <label>Search filename <input id="search" type="search" placeholder="Species, figure, filename…"></label>
+      <label>Show <select id="filter"><option value="all">All images</option><option value="disagreements">Any disagreement</option><option value="head-differences">Head disagreement</option><option value="uncertain">Uncertain results</option></select></label>
+      <label><input id="show-luna" type="checkbox" checked> Luna marker</label>
+      <label><input id="show-sol" type="checkbox" checked> Sol marker</label>
+    </div>
+    <div class="table-scroll"><table>
+      <thead><tr><th scope="col">#</th><th scope="col">Image and head positions</th><th scope="col">Luna classification</th><th scope="col">Sol classification</th><th scope="col">Differences</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table></div>
+    <p class="muted">Coordinates are fractions of the displayed image, from the top-left. Images load from the existing Azure Blob container; internet access is required. The image title links to its Wikipedia file page. Model confidence is self-reported, not calibrated.</p>
+  </main>
+  <dialog id="detail"><div class="dialog-top"><h2 id="detail-title"></h2><button id="close-detail" type="button">Close</button></div><div class="dialog-image" id="detail-image"></div></dialog>
+  <script src="data.js"></script>
+  <script src="viewer.js"></script>
+</body>
+</html>
