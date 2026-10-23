@@ -7,23 +7,45 @@
 @inject TransferLedger Ledger
 
 <MudStack Spacing="3">
-<MudBreadcrumbs Items="_breadcrumbs" />
+<div class="collection-heading">
+    <MudBreadcrumbs Items="_breadcrumbs" />
+    @if (_snapshot is not null)
+    {
+        <div class="target-counters" aria-label="Target counts by plan disposition">
+            @foreach (var item in Enum.GetValues<TargetDisposition>())
+            {
+                <MudPaper Class="target-counter" Elevation="1">
+                    <MudText Typo="Typo.subtitle2">@_snapshot.Plan.Targets.Count(t => t.Disposition == item)</MudText>
+                    <MudText Typo="Typo.caption" Color="Color.Secondary">@item</MudText>
+                </MudPaper>
+            }
+        </div>
+    }
+</div>
 <MudText Typo="Typo.h4">English Wikipedia · 2026-10-01</MudText>
-<MudText Color="Color.Secondary">Mark outputs stale, inspect the plan, or start a collection import. Image candidates can be explored in the separate preview.</MudText>
 <MudStack Row="true" Spacing="2">
-    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="StartImport">Import collection</MudButton>
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="StartImport" Disabled="@IsImporting">@(IsImporting ? "Importing" : "Import collection")</MudButton>
     <MudButton Variant="Variant.Outlined" OnClick="Refresh">Refresh now</MudButton>
     <MudButton Variant="Variant.Text" Href="/images">Preview images</MudButton>
+    <MudButton Variant="Variant.Outlined" OnClick="OpenConcurrencyDialog">Concurrency: @_savedParallelism</MudButton>
 </MudStack>
-<MudPaper Class="pa-4" Elevation="1">
-    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+<MudDialog @bind-Visible="_concurrencyDialogOpen">
+    <TitleContent>Concurrency</TitleContent>
+    <DialogContent>
         <MudNumericField T="int" Label="Maximum concurrent targets" Min="1" Max="@Creational.Dataflow.Execution.CollectionParallelism.Maximum"
                          Variant="Variant.Outlined" @bind-Value="_parallelismDraft" />
-        <MudButton Variant="Variant.Outlined" OnClick="SaveParallelism">Save limit</MudButton>
-        <MudText Color="Color.Secondary">Saved limit: @_savedParallelism</MudText>
-    </MudStack>
-    <MudText Typo="Typo.caption">This limits simultaneous targets. Import collection can still run all due targets in sequence.</MudText>
-</MudPaper>
+        <MudText Typo="Typo.caption">This limits simultaneous targets. Import collection can still run all due targets in sequence.</MudText>
+        @if (!string.IsNullOrEmpty(_parallelismError))
+        {
+            <MudAlert Severity="Severity.Error">@_parallelismError</MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _concurrencyDialogOpen = false)" Disabled="_savingParallelism">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="SaveParallelism"
+                   Disabled="@(_savingParallelism || _parallelismDraft < 1 || _parallelismDraft > Creational.Dataflow.Execution.CollectionParallelism.Maximum)">Save limit</MudButton>
+    </DialogActions>
+</MudDialog>
 @if (!string.IsNullOrEmpty(_message))
 {
     <MudAlert Severity="Severity.Success">@_message</MudAlert>
@@ -39,15 +61,6 @@
 }
 else
 {
-    <MudStack Row="true" Spacing="2">
-        @foreach (var item in Enum.GetValues<TargetDisposition>())
-        {
-            <MudPaper Class="pa-4" Elevation="1">
-                <MudText Typo="Typo.h5">@_snapshot.Plan.Targets.Count(t => t.Disposition == item)</MudText>
-                <MudText Color="Color.Secondary">@item</MudText>
-            </MudPaper>
-        }
-    </MudStack>
     @if (Coordinator.Snapshots().Count > 0)
     {
         <MudPaper Class="pa-4" Elevation="1">
@@ -99,17 +112,18 @@ else
                         var groupActive = CollectionPageModel.HasActiveAttempt(group, _snapshot.States);
                         <tr class="target-group-row" @key="group.Kind">
                             <th scope="rowgroup" colspan="8">
-                                <span class="activity"><span class="activity-icon">
+                                <div class="target-group-content"><span class="activity-icon">
                                     @if (groupActive)
                                     {
                                         <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />
                                     }
-                                </span><strong>@group.Kind</strong></span>
+                                </span><strong>@group.Kind</strong>
                                 <span class="target-group-count">@group.Targets.Count targets</span>
                                 @if (selectedInGroup > 0)
                                 {
                                     <span class="target-group-count">@selectedInGroup selected</span>
                                 }
+                                </div>
                             </th>
                         </tr>
                         @foreach (var planned in CollectionPageModel.VisibleTargets(group, _snapshot.States, _targetListView))
@@ -141,7 +155,7 @@ else
                                 <td @onclick:stopPropagation="true">
                                     <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_markingStale"
                                                OnClick="@(() => MarkStale(planned.Id))">
-                                        @(_selection.Count > 0 ? $"Mark {_selection.Count} selected stale" : "Mark stale")
+                                        Mark stale
                                     </MudButton>
                                 </td>
                             </tr>
@@ -174,8 +188,12 @@ else
     private CollectionPlanSnapshot? _snapshot;
     private string? _message;
     private string? _error;
+    private string? _parallelismError;
     private int _parallelismDraft = Creational.Dataflow.Execution.CollectionParallelism.Default;
     private int _savedParallelism = Creational.Dataflow.Execution.CollectionParallelism.Default;
+    private bool _concurrencyDialogOpen;
+    private bool _savingParallelism;
+    private bool _startingImport;
     private readonly TargetSelection _selection = new();
     private TargetListView _targetListView = TargetListView.All;
     private readonly List<BreadcrumbItem> _breadcrumbs =
@@ -183,6 +201,8 @@ else
     private bool _markingStale;
     private readonly CancellationTokenSource _refreshStop = new();
     private Task? _refreshTask;
+    private bool IsImporting => _startingImport || Coordinator.Snapshots().Any(run =>
+        run.Collection == October2026Collection.Collection && run.State == "running");
 
     protected override async Task OnInitializedAsync()
     {
@@ -196,7 +216,7 @@ else
         {
             _snapshot = await Engine.GetRecordedPlanAsync(October2026Collection.Collection, _refreshStop.Token);
             var parallelism = await Settings.GetParallelismAsync(October2026Collection.Collection, _refreshStop.Token);
-            if (_parallelismDraft == _savedParallelism) _parallelismDraft = parallelism;
+            if (!_concurrencyDialogOpen) _parallelismDraft = parallelism;
             _savedParallelism = parallelism;
             _error = null;
         }
@@ -258,20 +278,32 @@ else
         _ => Color.Default
     };
 
+    private void OpenConcurrencyDialog()
+    {
+        _parallelismDraft = _savedParallelism;
+        _parallelismError = null;
+        _concurrencyDialogOpen = true;
+    }
+
     private async Task SaveParallelism()
     {
+        _savingParallelism = true;
         try
         {
             await Settings.SetParallelismAsync(October2026Collection.Collection, _parallelismDraft, _refreshStop.Token);
             _savedParallelism = _parallelismDraft;
             _message = $"Maximum concurrent targets set to {_savedParallelism}.";
-            _error = null;
+            _parallelismError = null;
+            _concurrencyDialogOpen = false;
         }
-        catch (Exception error) { _error = error.Message; }
+        catch (Exception error) { _parallelismError = error.Message; }
+        finally { _savingParallelism = false; }
     }
 
     private async Task StartImport()
     {
+        if (IsImporting) return;
+        _startingImport = true;
         try
         {
             var run = await Coordinator.StartOrGetAsync(October2026Collection.Collection, CancellationToken.None);
@@ -279,6 +311,7 @@ else
             await Refresh();
         }
         catch (Exception error) { _error = error.Message; }
+        finally { _startingImport = false; }
     }
 
     public async ValueTask DisposeAsync()

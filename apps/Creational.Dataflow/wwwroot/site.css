@@ -1,4 +1,8 @@
 body { background: var(--mud-palette-background); }
+.collection-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.target-counters { display: flex; gap: .5rem; flex-wrap: wrap; }
+.target-counter { box-sizing: border-box; width: 5.5rem; padding: .3rem .5rem; text-align: center; }
+.target-counter .mud-typography { display: block; line-height: 1.3; }
 .table-scroll { overflow-x: auto; }
 .activity { display: inline-flex; align-items: center; gap: .45rem; white-space: nowrap; }
 .activity-icon { display: inline-flex; width: 20px; height: 20px; flex: 0 0 20px; align-items: center; justify-content: center; }
@@ -9,7 +13,8 @@ body { background: var(--mud-palette-background); }
 .target-table th, .target-table td { padding: .55rem .75rem; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--mud-palette-divider); }
 .target-table thead th { color: var(--mud-palette-text-secondary); font-weight: 600; white-space: nowrap; }
 .target-table .target-group-row th { background: var(--mud-palette-background-grey); padding: .65rem .75rem; font-weight: 400; }
-.target-group-count { margin-left: 1rem; color: var(--mud-palette-text-secondary); font-size: .8rem; }
+.target-group-content { display: flex; align-items: center; gap: .75rem; min-height: 20px; line-height: 20px; }
+.target-group-count { color: var(--mud-palette-text-secondary); font-size: .8rem; font-weight: 400; }
 .target-item-row { cursor: pointer; }
 .target-item-row:hover { background: var(--mud-palette-action-default-hover); }
 .target-item-row.selected { background: var(--mud-palette-action-default-hover); }
