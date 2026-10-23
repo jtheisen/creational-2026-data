@@ -1,8 +1,22 @@
 body { background: var(--mud-palette-background); }
 .table-scroll { overflow-x: auto; }
-.target-group-title { font-weight: 600; }
-.target-group-title small { margin-left: .5rem; opacity: .7; font-size: .8rem; font-weight: 400; }
-.activity { display: inline-flex; align-items: center; gap: .45rem; }
+.activity { display: inline-flex; align-items: center; gap: .45rem; white-space: nowrap; }
+.activity-icon { display: inline-flex; width: 20px; height: 20px; flex: 0 0 20px; align-items: center; justify-content: center; }
+.activity-icon .mud-progress-circular { width: 20px !important; height: 20px !important; }
+.target-toolbar { flex-wrap: wrap; }
+.target-table-paper { overflow: hidden; }
+.target-table { width: 100%; min-width: 1000px; border-collapse: collapse; font-size: .875rem; }
+.target-table th, .target-table td { padding: .55rem .75rem; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--mud-palette-divider); }
+.target-table thead th { color: var(--mud-palette-text-secondary); font-weight: 600; white-space: nowrap; }
+.target-table .target-group-row th { background: var(--mud-palette-background-grey); padding: .65rem .75rem; font-weight: 400; }
+.target-group-count { margin-left: 1rem; color: var(--mud-palette-text-secondary); font-size: .8rem; }
+.target-item-row { cursor: pointer; }
+.target-item-row:hover { background: var(--mud-palette-action-default-hover); }
+.target-item-row.selected { background: var(--mud-palette-action-default-hover); }
+.target-key { font-weight: 600; overflow-wrap: anywhere; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.preview-loading { min-height: 24px; }
+.preview-loading-idle { visibility: hidden; }
 .image-card { height: 100%; }
 .image-thumb { display: block; width: 100%; height: 190px; object-fit: contain; background: var(--mud-palette-background-grey); }
 .image-placeholder { display: grid; place-items: center; color: var(--mud-palette-text-secondary); }

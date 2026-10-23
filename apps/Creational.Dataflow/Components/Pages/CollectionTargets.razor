@@ -58,11 +58,12 @@ else
                     <RowTemplate Context="run">
                         <MudTd>@run.RunId[..8]</MudTd>
                         <MudTd>
-                            @if (run.State == "running")
-                            {
-                                <span class="activity"><MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />@run.State</span>
-                            }
-                            else { @run.State }
+                            <span class="activity"><span class="activity-icon">
+                                @if (run.State == "running")
+                                {
+                                    <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />
+                                }
+                            </span>@run.State</span>
                         </MudTd>
                         <MudTd>@run.StartedAt.ToLocalTime()</MudTd><MudTd>@run.Error</MudTd>
                     </RowTemplate>
@@ -70,80 +71,86 @@ else
             </div>
         </MudPaper>
     }
-    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
+    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Spacing="2" Class="target-toolbar">
         <MudText>@_selection.Count selected</MudText>
         @if (_selection.Count > 0)
         {
             <MudButton Variant="Variant.Text" Size="Size.Small" OnClick="_selection.Clear" Disabled="_markingStale">Clear selection</MudButton>
         }
+        <MudSpacer />
+        <MudToggleGroup T="TargetListView" @bind-Value="_targetListView" SelectionMode="SelectionMode.SingleSelection" Size="Size.Small" Color="Color.Primary" CheckMark="true" FixedContent="true" aria-label="Show targets">
+            <MudToggleItem Value="TargetListView.All" Text="All" />
+            <MudToggleItem Value="TargetListView.Working" Text="Working on" />
+            <MudToggleItem Value="TargetListView.Groups" Text="Groups only" />
+        </MudToggleGroup>
     </MudStack>
-    <MudExpansionPanels MultiExpansion="true" Dense="true" Elevation="0">
-        @foreach (var group in CollectionPageModel.Groups(_snapshot.Plan))
-        {
-            var groupKind = group.Kind;
-            var selectedInGroup = group.Targets.Count(t => _selection.Contains(t.Id));
-            <MudExpansionPanel @key="groupKind" Expanded="_expandedGroups.Contains(groupKind)"
-                               ExpandedChanged="@(expanded => SetExpanded(groupKind, expanded))">
-                <TitleContent>
-                    <span class="target-group-title">@groupKind <small>@group.Targets.Count targets</small>
-                        @if (selectedInGroup > 0)
+    <MudPaper Elevation="1" Class="target-table-paper">
+        <div class="table-scroll">
+            <table class="target-table">
+                <thead><tr>
+                    <th scope="col"><span class="visually-hidden">Select</span></th>
+                    <th scope="col">Target</th><th scope="col">Plan</th><th scope="col">Reason</th>
+                    <th scope="col">Last outcome</th><th scope="col">Output</th><th scope="col">Detail</th><th scope="col">Action</th>
+                </tr></thead>
+                <tbody>
+                    @foreach (var group in CollectionPageModel.Groups(_snapshot.Plan))
+                    {
+                        var selectedInGroup = group.Targets.Count(t => _selection.Contains(t.Id));
+                        var groupActive = CollectionPageModel.HasActiveAttempt(group, _snapshot.States);
+                        <tr class="target-group-row" @key="group.Kind">
+                            <th scope="rowgroup" colspan="8">
+                                <span class="activity"><span class="activity-icon">
+                                    @if (groupActive)
+                                    {
+                                        <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />
+                                    }
+                                </span><strong>@group.Kind</strong></span>
+                                <span class="target-group-count">@group.Targets.Count targets</span>
+                                @if (selectedInGroup > 0)
+                                {
+                                    <span class="target-group-count">@selectedInGroup selected</span>
+                                }
+                            </th>
+                        </tr>
+                        @foreach (var planned in CollectionPageModel.VisibleTargets(group, _snapshot.States, _targetListView))
                         {
-                            <small>· @selectedInGroup selected</small>
-                        }
-                    </span>
-                </TitleContent>
-                <ChildContent>
-                    <div class="table-scroll">
-                        <MudTable T="PlannedTarget" Items="group.Targets" Dense="true" Hover="true" Elevation="0" Breakpoint="Breakpoint.None"
-                                  OnRowClick="OnTargetRowClick">
-                            <HeaderContent>
-                                <MudTh>Select</MudTh><MudTh>Target</MudTh><MudTh>Plan</MudTh><MudTh>Reason</MudTh>
-                                <MudTh>Last outcome</MudTh><MudTh>Output</MudTh><MudTh>Detail</MudTh><MudTh>Action</MudTh>
-                            </HeaderContent>
-                            <RowTemplate Context="planned">
-                                @{ _snapshot.States.TryGetValue(planned.Id, out var state); }
-                                <MudTd>
-                                    <span @onclick:stopPropagation="true">
-                                        <MudCheckBox T="bool" Dense="true" AriaLabel="@($"Select {planned.Id}")"
-                                                     Value="_selection.Contains(planned.Id)"
-                                                     ValueChanged="@(selected => SetSelected(planned.Id, selected))" />
-                                    </span>
-                                </MudTd>
-                                <MudTd><strong>@planned.Id.Key</strong></MudTd>
-                                <MudTd><MudChip T="string" Size="Size.Small" Color="@DispositionColor(planned.Disposition)">@planned.Disposition</MudChip></MudTd>
-                                <MudTd>@planned.Reason</MudTd>
-                                <MudTd>
-                                    @if (state?.Outcome is "queued" or "launching" or "running")
+                            _snapshot.States.TryGetValue(planned.Id, out var state);
+                            <tr class="target-item-row @(_selection.Contains(planned.Id) ? "selected" : "")" @key="planned.Id"
+                                @onclick="@(() => _selection.Toggle(planned.Id))" aria-selected="@_selection.Contains(planned.Id)">
+                                <td @onclick:stopPropagation="true">
+                                    <MudCheckBox T="bool" Dense="true" AriaLabel="@($"Select {planned.Id}")"
+                                                 Value="_selection.Contains(planned.Id)"
+                                                 ValueChanged="@(selected => SetSelected(planned.Id, selected))" />
+                                </td>
+                                <td class="target-key">@planned.Id.Key</td>
+                                <td><MudChip T="string" Size="Size.Small" Color="@DispositionColor(planned.Disposition)">@planned.Disposition</MudChip></td>
+                                <td>@planned.Reason</td>
+                                <td><span class="activity"><span class="activity-icon">
+                                    @if (CollectionPageModel.IsActive(planned.Id, _snapshot.States))
                                     {
-                                        <span class="activity"><MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />@state.Outcome</span>
+                                        <MudProgressCircular Indeterminate="true" Size="Size.Small" Color="Color.Primary" />
                                     }
-                                    else
-                                    {
-                                        @(state?.Outcome ?? "missing")
-                                    }
-                                </MudTd>
-                                <MudTd>
+                                </span>@(state?.Outcome ?? "missing")</span></td>
+                                <td @onclick:stopPropagation="true">
                                     @if (state?.ManifestPath is { Length: > 0 } marker)
                                     {
-                                        <span @onclick:stopPropagation="true"><a href="@marker" target="_blank" rel="noopener noreferrer">Output group</a></span>
+                                        <a href="@marker" target="_blank" rel="noopener noreferrer">Output group</a>
                                     }
-                                </MudTd>
-                                <MudTd>@(state?.Error ?? state?.StaleReason ?? "")</MudTd>
-                                <MudTd>
-                                    <span @onclick:stopPropagation="true">
-                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_markingStale"
-                                                   OnClick="@(() => MarkStale(planned.Id))">
-                                            @(_selection.Count > 0 ? $"Mark {_selection.Count} selected stale" : "Mark stale")
-                                        </MudButton>
-                                    </span>
-                                </MudTd>
-                            </RowTemplate>
-                        </MudTable>
-                    </div>
-                </ChildContent>
-            </MudExpansionPanel>
-        }
-    </MudExpansionPanels>
+                                </td>
+                                <td>@(state?.Error ?? state?.StaleReason ?? "")</td>
+                                <td @onclick:stopPropagation="true">
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Disabled="_markingStale"
+                                               OnClick="@(() => MarkStale(planned.Id))">
+                                        @(_selection.Count > 0 ? $"Mark {_selection.Count} selected stale" : "Mark stale")
+                                    </MudButton>
+                                </td>
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </MudPaper>
 }
 
 @if (Ledger.All().Count > 0)
@@ -170,7 +177,7 @@ else
     private int _parallelismDraft = Creational.Dataflow.Execution.CollectionParallelism.Default;
     private int _savedParallelism = Creational.Dataflow.Execution.CollectionParallelism.Default;
     private readonly TargetSelection _selection = new();
-    private readonly HashSet<string> _expandedGroups = [];
+    private TargetListView _targetListView = TargetListView.All;
     private readonly List<BreadcrumbItem> _breadcrumbs =
         [new("Collections", "/"), new("English Wikipedia", null, true)];
     private bool _markingStale;
@@ -241,17 +248,6 @@ else
     }
 
     private void SetSelected(TargetId id, bool selected) => _selection.Set(id, selected);
-
-    private void OnTargetRowClick(TableRowClickEventArgs<PlannedTarget> args)
-    {
-        if (args.Item is { } item) _selection.Toggle(item.Id);
-    }
-
-    private void SetExpanded(string kind, bool expanded)
-    {
-        if (expanded) _expandedGroups.Add(kind);
-        else _expandedGroups.Remove(kind);
-    }
 
     private static Color DispositionColor(TargetDisposition disposition) => disposition switch
     {

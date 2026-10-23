@@ -19,13 +19,15 @@
         </MudStack>
     </MudPaper>
 
-    @if (_loading)
-    {
-        <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2">
-            <MudProgressCircular Indeterminate="true" Size="Size.Small" />
-            <MudText>Preparing the catalog and resolving visible images…</MudText>
-        </MudStack>
-    }
+    <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="2" Class="@(_loading ? "preview-loading" : "preview-loading preview-loading-idle")" aria-live="polite">
+        <span class="activity-icon">
+            @if (_loading)
+            {
+                <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+            }
+        </span>
+        <MudText>@(_loading ? "Preparing the catalog and resolving visible images…" : "")</MudText>
+    </MudStack>
     @if (_error is not null)
     {
         <MudAlert Severity="Severity.Error">@_error</MudAlert>
