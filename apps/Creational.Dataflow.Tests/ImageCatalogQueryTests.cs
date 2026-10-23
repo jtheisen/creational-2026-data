@@ -76,6 +76,25 @@ public class ImageCatalogQueryTests
         Assert.Contains(page.Items, item => item.FileTitle == "File:A.JPG");
     }
 
+    [Fact]
+    public async Task StreamingCatalogYieldsOrderedChunksWithoutRepeatingTheSelection()
+    {
+        using var fixture = new CatalogFixture();
+        fixture.AddResolvedMetadata();
+        fixture.AddCaseVariant();
+        var chunks = new List<IReadOnlyList<ImageCandidate>>();
+
+        var count = await ImageCatalogQuery.StreamAsync(fixture.Root, ImageSelection.Parse("10"), 2,
+            (chunk, _) => { chunks.Add(chunk); return Task.CompletedTask; }, CancellationToken.None);
+
+        Assert.Equal(3, count);
+        Assert.Equal([2, 1], chunks.Select(x => x.Count));
+        Assert.Equal(["File:A.JPG", "File:A.jpg", "File:B.jpg"],
+            chunks.SelectMany(x => x).Select(x => x.FileTitle));
+        Assert.Null(chunks[0][0].SourceWiki);
+        Assert.Equal("enwiki", chunks[0][1].SourceWiki);
+    }
+
     private sealed class CatalogFixture : IDisposable
     {
         public string Root { get; } = Path.Combine(Path.GetTempPath(), "creational-image-test-" + Guid.NewGuid().ToString("N"));

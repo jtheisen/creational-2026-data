@@ -29,6 +29,7 @@ public sealed record ThumbnailImportBatch(string Id, ImageSelection Selection, i
     public int CopiedImages { get; init; }
     public int SkippedImages { get; init; }
     public int FailedImages { get; init; }
+    public string? ParentRunId { get; init; }
     public int EndOffset => checked(StartOffset + RequestedCount);
 
     public string ChildId(int offset) => $"{Id}-{offset:D8}";
@@ -41,6 +42,23 @@ public sealed record ThumbnailImportBatch(string Id, ImageSelection Selection, i
         return new(Guid.NewGuid().ToString("N"), selection, offset, count, offset,
             "pending", DateTimeOffset.UtcNow);
     }
+}
+
+public sealed record ThumbnailImportRun(string Id, ImageSelection Selection, int TotalImages,
+    int NextBatchIndex, string Status, DateTimeOffset CreatedAt,
+    int CopiedImages = 0, int SkippedImages = 0, int FailedImages = 0,
+    string? Error = null)
+{
+    public const int ImagesPerBatch = 1000;
+    public int Width { get; init; } = 250;
+    public int BatchCount => TotalImages == 0 ? 0 : 1 + (TotalImages - 1) / ImagesPerBatch;
+    public string BatchId(int index) => $"{Id}-{index:D6}";
+    public string ManifestPath(int index) => $"image-jobs/batches/{BatchId(index)}/manifest.json";
+    public int BatchStartOffset(int index) => checked(index * ImagesPerBatch);
+    public int BatchImageCount(int index) => Math.Min(ImagesPerBatch, TotalImages - BatchStartOffset(index));
+
+    public static ThumbnailImportRun Create(ImageSelection selection) =>
+        new(Guid.NewGuid().ToString("N"), selection, 0, 0, "pending", DateTimeOffset.UtcNow);
 }
 
 public sealed record ThumbnailBatchManifest(string BatchId, ImageCandidate[] Images);

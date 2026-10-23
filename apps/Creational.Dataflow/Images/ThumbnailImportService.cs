@@ -54,6 +54,37 @@ public sealed class ThumbnailImportService(
     public Task<IReadOnlyList<ThumbnailImportBatch>> ListBatchesAsync(int limit, CancellationToken ct) =>
         repository.ListBatchesAsync(limit, ct);
 
+    public Task<IReadOnlyList<ThumbnailImportBatch>> ListRunBatchesAsync(string id, CancellationToken ct) =>
+        repository.ListRunBatchesAsync(id, ct);
+
+    public Task<ThumbnailImportRun?> GetRunAsync(string id, CancellationToken ct) =>
+        repository.GetRunAsync(id, ct);
+
+    public Task<IReadOnlyList<ThumbnailImportRun>> ListRunsAsync(int limit, CancellationToken ct) =>
+        repository.ListRunsAsync(limit, ct);
+
+    public async Task<string> CreateRunAsync(ImageSelection selection, CancellationToken ct)
+    {
+        if (catalog is null || manifests is null)
+            throw new InvalidOperationException("Image catalog and manifest storage are required for import runs.");
+        var run = ThumbnailImportRun.Create(selection);
+        var chunkIndex = 0;
+        var total = await catalog.SnapshotAsync(selection, ThumbnailImportRun.ImagesPerBatch,
+            async (chunk, token) =>
+            {
+                var id = run.BatchId(chunkIndex);
+                await manifests.SaveAsync(new ThumbnailBatchManifest(id, chunk.ToArray()), token);
+                chunkIndex++;
+            }, ct);
+        if (total == 0) throw new InvalidOperationException("No images were found in this selection.");
+        run = run with { TotalImages = total };
+        if (chunkIndex != run.BatchCount)
+            throw new InvalidDataException("Image catalog snapshot produced an unexpected number of chunks.");
+        await repository.AddRunAsync(run, ct);
+        if (_wake.CurrentCount == 0) _wake.Release();
+        return run.Id;
+    }
+
     public Task<IReadOnlyList<ThumbnailImportJob>> ListJobsAsync(int limit, CancellationToken ct) =>
         repository.ListJobsAsync(limit, ct);
 
@@ -101,10 +132,59 @@ public sealed class ThumbnailImportService(
 
     public async Task ProcessPendingAsync(CancellationToken ct)
     {
+        await ReconcileRunsAsync(ct);
         foreach (var job in (await repository.ListIncompleteJobsAsync(ct)).Where(x => x.BatchId is null))
             await RunJobAsync(job, ct);
         foreach (var batch in await repository.ListActiveBatchesAsync(ct))
             await RunBatchAsync(batch, ct);
+        await ReconcileRunsAsync(ct);
+    }
+
+    private async Task ReconcileRunsAsync(CancellationToken ct)
+    {
+        foreach (var run in await repository.ListActiveRunsAsync(ct))
+            await AdvanceRunAsync(run, ct);
+    }
+
+    private async Task AdvanceRunAsync(ThumbnailImportRun run, CancellationToken ct)
+    {
+        while (run.NextBatchIndex < run.BatchCount)
+        {
+            ct.ThrowIfCancellationRequested();
+            var index = run.NextBatchIndex;
+            var id = run.BatchId(index);
+            var batch = await repository.GetBatchAsync(id, ct);
+            if (batch is null)
+            {
+                var start = run.BatchStartOffset(index);
+                var proposed = ThumbnailImportBatch.Create(run.Selection, start, run.BatchImageCount(index)) with
+                {
+                    Id = id, ManifestPath = run.ManifestPath(index), ParentRunId = run.Id, Width = run.Width
+                };
+                batch = await repository.AddBatchIfMissingAsync(proposed, ct);
+            }
+            if (batch.ParentRunId != run.Id || batch.ManifestPath != run.ManifestPath(index) ||
+                batch.StartOffset != run.BatchStartOffset(index) ||
+                batch.RequestedCount != run.BatchImageCount(index))
+                throw new InvalidDataException("Image run child batch does not match its snapshot.");
+            if (batch.Status is not ("complete" or "complete-with-errors"))
+            {
+                if (run.Status == "pending") await repository.SaveRunAsync(run with { Status = "running" }, ct);
+                return;
+            }
+            run = run with
+            {
+                NextBatchIndex = index + 1,
+                CopiedImages = checked(run.CopiedImages + batch.CopiedImages),
+                SkippedImages = checked(run.SkippedImages + batch.SkippedImages),
+                FailedImages = checked(run.FailedImages + batch.FailedImages),
+                Status = index + 1 == run.BatchCount
+                    ? run.FailedImages + batch.FailedImages == 0 ? "complete" : "complete-with-errors"
+                    : "running",
+                Error = null
+            };
+            await repository.SaveRunAsync(run, ct);
+        }
     }
 
     private async Task RunBatchAsync(ThumbnailImportBatch batch, CancellationToken ct)

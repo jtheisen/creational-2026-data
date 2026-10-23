@@ -17,6 +17,10 @@
     }
     else
     {
+        @if (_batch.ParentRunId is { } runId)
+        {
+            <MudButton Href="@($"/image-runs/{runId}")" Variant="Variant.Text" Color="Color.Primary">Back to import run</MudButton>
+        }
         <MudPaper Class="pa-4">
             <MudStack Spacing="1">
                 <MudText>Selection: @SelectionLabel · images @(_batch.StartOffset + 1)–@_batch.EndOffset · width @_batch.Width px</MudText>

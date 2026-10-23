@@ -1,0 +1,114 @@
+@page "/image-runs/{Id}"
+@implements IAsyncDisposable
+@using Creational.Dataflow.Images
+@inject ThumbnailImportService Imports
+
+<MudStack Spacing="3">
+    <MudBreadcrumbs Items="_breadcrumbs" />
+    <MudText Typo="Typo.h4">Image import run</MudText>
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error">@_error</MudAlert>
+    }
+    else if (_run is null)
+    {
+        <MudProgressCircular Indeterminate="true" />
+    }
+    else
+    {
+        <MudPaper Class="pa-4">
+            <MudStack Spacing="1">
+                <MudText>Selection: @SelectionLabel · @_run.TotalImages.ToString("N0") candidate images · width @_run.Width px</MudText>
+                <MudText>Status: @_run.Status · @ProcessedImages.ToString("N0") of @_run.TotalImages.ToString("N0") processed</MudText>
+                <MudText>@CopiedImages.ToString("N0") copied · @SkippedImages.ToString("N0") already present · @FailedImages.ToString("N0") failed</MudText>
+                <MudProgressLinear Color="Color.Primary" Value="@Progress" />
+                @if (_run.Error is not null)
+                {
+                    <MudText Color="Color.Error">@_run.Error</MudText>
+                }
+            </MudStack>
+        </MudPaper>
+        <MudText Typo="Typo.h6">Batches</MudText>
+        @if (_batches.Count == 0)
+        {
+            <MudText Color="Color.Secondary">The first batch will appear when scheduling starts.</MudText>
+        }
+        else
+        {
+            <MudTable Items="_batches" Dense="true" Hover="true" RowsPerPage="10">
+                <HeaderContent><MudTh>Range</MudTh><MudTh>Progress</MudTh><MudTh>Copied</MudTh><MudTh>Skipped</MudTh><MudTh>Failed</MudTh><MudTh>Status</MudTh></HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Range"><a href="@($"/image-batches/{context.Id}")">@((context.StartOffset + 1).ToString("N0"))–@context.EndOffset.ToString("N0")</a></MudTd>
+                    <MudTd DataLabel="Progress">@((context.NextOffset - context.StartOffset).ToString("N0")) / @context.RequestedCount.ToString("N0")</MudTd>
+                    <MudTd DataLabel="Copied">@context.CopiedImages.ToString("N0")</MudTd>
+                    <MudTd DataLabel="Skipped">@context.SkippedImages.ToString("N0")</MudTd>
+                    <MudTd DataLabel="Failed">@context.FailedImages.ToString("N0")</MudTd>
+                    <MudTd DataLabel="Status">@context.Status</MudTd>
+                </RowTemplate>
+                <PagerContent><MudTablePager /></PagerContent>
+            </MudTable>
+        }
+    }
+</MudStack>
+
+@code {
+    [Parameter] public string Id { get; set; } = "";
+    private ThumbnailImportRun? _run;
+    private IReadOnlyList<ThumbnailImportBatch> _batches = [];
+    private string? _error;
+    private CancellationTokenSource? _stop;
+    private ThumbnailImportBatch? CurrentBatch => _run is null ? null :
+        _batches.FirstOrDefault(x => x.Id == _run.BatchId(_run.NextBatchIndex));
+    private long ProcessedImages => _run is null ? 0 :
+        Math.Min((long)_run.TotalImages, (long)_run.NextBatchIndex * ThumbnailImportRun.ImagesPerBatch +
+            (CurrentBatch is { } batch ? batch.NextOffset - batch.StartOffset : 0));
+    private int CopiedImages => (_run?.CopiedImages ?? 0) + (CurrentBatch?.CopiedImages ?? 0);
+    private int SkippedImages => (_run?.SkippedImages ?? 0) + (CurrentBatch?.SkippedImages ?? 0);
+    private int FailedImages => (_run?.FailedImages ?? 0) + (CurrentBatch?.FailedImages ?? 0);
+    private double Progress => _run is null || _run.TotalImages == 0 ? 0 : 100.0 * ProcessedImages / _run.TotalImages;
+    private string SelectionLabel => _run?.Selection.Kind == ImageSelectionKind.OttBranch
+        ? $"OTT {_run.Selection.Value}" : $"Wikipedia: {_run?.Selection.Value}";
+    private readonly List<BreadcrumbItem> _breadcrumbs =
+        [new("Collections", "/"), new("Image jobs", "/image-jobs"), new("Run", null, true)];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _stop = new CancellationTokenSource();
+        await RefreshAsync(_stop.Token);
+        if (_run?.Status is "pending" or "running") _ = PollAsync(_stop.Token);
+    }
+
+    private async Task PollAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(10), ct);
+                await InvokeAsync(async () => { await RefreshAsync(ct); StateHasChanged(); });
+                if (_run?.Status is not ("pending" or "running")) break;
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
+    private async Task RefreshAsync(CancellationToken ct)
+    {
+        try
+        {
+            _run = await Imports.GetRunAsync(Id, ct);
+            if (_run is null) { _error = "Image import run was not found."; return; }
+            _batches = await Imports.ListRunBatchesAsync(Id, ct);
+            _error = null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception error) { _error = error.Message; }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _stop?.Cancel();
+        _stop?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

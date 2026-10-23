@@ -95,6 +95,17 @@
                     </MudText>
                 </MudStack>
             </MudPaper>
+            <MudPaper Class="pa-4">
+                <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween" Spacing="2">
+                    <MudStack Spacing="0">
+                        <MudText Typo="Typo.h6">Import the entire selection</MudText>
+                        <MudText Typo="Typo.body2">Freeze all @_page.CandidateCount.ToString("N0") candidate files, then process them automatically in batches of up to 1,000.</MudText>
+                    </MudStack>
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="@(_loading || _importing || _page.CandidateCount == 0)" OnClick="ImportAllAsync">
+                        @(_importing ? "Scheduling…" : "Import all candidates")
+                    </MudButton>
+                </MudStack>
+            </MudPaper>
             <MudGrid Spacing="2">
                 @foreach (var candidate in _page.Items)
                 {
@@ -235,6 +246,20 @@
             var count = Math.Min(_batchCount, _page.CandidateCount - BatchOffset);
             var id = await ThumbnailImports.CreateBatchAsync(_selection, BatchOffset, count, CancellationToken.None);
             Navigation.NavigateTo($"/image-batches/{id}");
+        }
+        catch (Exception error) { _error = error.Message; }
+        finally { _importing = false; }
+    }
+
+    private async Task ImportAllAsync()
+    {
+        if (_selection is null || _page is null || _page.CandidateCount == 0 || _importing) return;
+        _importing = true;
+        _error = null;
+        try
+        {
+            var id = await ThumbnailImports.CreateRunAsync(_selection, CancellationToken.None);
+            Navigation.NavigateTo($"/image-runs/{id}");
         }
         catch (Exception error) { _error = error.Message; }
         finally { _importing = false; }

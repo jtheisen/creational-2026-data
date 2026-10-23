@@ -214,6 +214,102 @@ public sealed class ThumbnailImportTests
     }
 
     [Fact]
+    public async Task ImportRunFreezesMoreThanOneBatchBeforePublishingItsRunRow()
+    {
+        var titles = Enumerable.Range(0, 1002).Select(x => $"File:Animal {x:D4}.jpg").ToArray();
+        var catalog = new FakeCatalog(titles);
+        var repository = new MemoryRepository();
+        var manifests = new MemoryManifestStore();
+        using var http = new HttpClient(new MetadataHandler());
+        var service = new ThumbnailImportService(repository, new FakeCopier(),
+            new WikimediaImageInfo(http, "CreationalDataflow/1.0 (contact: test@example.org)"),
+            NullLogger<ThumbnailImportService>.Instance, catalog, manifests, new FakeInfoStore());
+
+        var id = await service.CreateRunAsync(ImageSelection.Parse("691846"), CancellationToken.None);
+
+        var run = (await service.GetRunAsync(id, CancellationToken.None))!;
+        Assert.Equal(1002, run.TotalImages);
+        Assert.Equal(2, run.BatchCount);
+        Assert.Equal(1, catalog.SnapshotCount);
+        Assert.Equal(0, catalog.QueryCount);
+        Assert.Equal(1000, (await manifests.ReadAsync(run.ManifestPath(0), CancellationToken.None)).Images.Length);
+        Assert.Equal(2, (await manifests.ReadAsync(run.ManifestPath(1), CancellationToken.None)).Images.Length);
+        Assert.Empty(await service.ListRunBatchesAsync(id, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task EmptySelectionDoesNotPublishAnImportRun()
+    {
+        var repository = new MemoryRepository();
+        using var http = new HttpClient(new MetadataHandler());
+        var service = new ThumbnailImportService(repository, new FakeCopier(),
+            new WikimediaImageInfo(http, "CreationalDataflow/1.0 (contact: test@example.org)"),
+            NullLogger<ThumbnailImportService>.Instance, new FakeCatalog([]),
+            new MemoryManifestStore(), new FakeInfoStore());
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.CreateRunAsync(ImageSelection.Parse("691846"), CancellationToken.None));
+
+        Assert.Empty(await service.ListRunsAsync(10, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task ImportRunCountsFinishedChildOnceAndResumesNextBatch()
+    {
+        var titles = Enumerable.Range(0, 1001).Select(x => $"File:Animal {x:D4}.jpg").ToArray();
+        var repository = new MemoryRepository();
+        var manifests = new MemoryManifestStore();
+        var copier = new FakeCopier();
+        using var http = new HttpClient(new MetadataHandler());
+        var service = new ThumbnailImportService(repository, copier,
+            new WikimediaImageInfo(http, "CreationalDataflow/1.0 (contact: test@example.org)"),
+            NullLogger<ThumbnailImportService>.Instance, new FakeCatalog(titles), manifests, new FakeInfoStore());
+        var id = await service.CreateRunAsync(ImageSelection.Parse("691846"), CancellationToken.None);
+
+        await service.ProcessPendingAsync(CancellationToken.None);
+        await service.ProcessPendingAsync(CancellationToken.None);
+        await service.ProcessPendingAsync(CancellationToken.None);
+
+        var run = (await service.GetRunAsync(id, CancellationToken.None))!;
+        Assert.Equal("complete", run.Status);
+        Assert.Equal(2, run.NextBatchIndex);
+        Assert.Equal(1001, run.CopiedImages);
+        Assert.Equal(2, (await service.ListRunBatchesAsync(id, CancellationToken.None)).Count);
+        Assert.Equal(1001, copier.Copied.Count);
+        Assert.Equal(2, repository.BatchInsertCount);
+    }
+
+    [Fact]
+    public async Task ImportRunReconcilesAnAlreadyFinishedFailedBatchAfterRestart()
+    {
+        var repository = new MemoryRepository();
+        var manifests = new MemoryManifestStore();
+        var copier = new FakeCopier();
+        using var http = new HttpClient(new MetadataHandler());
+        var service = new ThumbnailImportService(repository, copier,
+            new WikimediaImageInfo(http, "CreationalDataflow/1.0 (contact: test@example.org)"),
+            NullLogger<ThumbnailImportService>.Instance,
+            new FakeCatalog(["File:Unavailable.jpg"]), manifests, new FakeInfoStore());
+        var id = await service.CreateRunAsync(ImageSelection.Parse("691846"), CancellationToken.None);
+        var run = (await repository.GetRunAsync(id, CancellationToken.None))!;
+        await repository.AddBatchAsync(ThumbnailImportBatch.Create(run.Selection, 0, 1) with
+        {
+            Id = run.BatchId(0), ManifestPath = run.ManifestPath(0), ParentRunId = run.Id,
+            NextOffset = 1, Status = "complete-with-errors", FailedImages = 1
+        }, CancellationToken.None);
+
+        await service.ProcessPendingAsync(CancellationToken.None);
+        await service.ProcessPendingAsync(CancellationToken.None);
+
+        var finished = (await repository.GetRunAsync(id, CancellationToken.None))!;
+        Assert.Equal("complete-with-errors", finished.Status);
+        Assert.Equal(1, finished.NextBatchIndex);
+        Assert.Equal(1, finished.FailedImages);
+        Assert.Equal(1, repository.BatchInsertCount);
+        Assert.Empty(copier.Copied);
+    }
+
+    [Fact]
     public async Task BatchRestartAdvancesPastExistingChildWithoutDuplicatingIt()
     {
         var titles = Enumerable.Range(0, 25).Select(x => $"File:Image {x}.jpg").ToArray();
@@ -262,10 +358,12 @@ public sealed class ThumbnailImportTests
     {
         private readonly Dictionary<string, ThumbnailImportJob> _jobs = [];
         private readonly Dictionary<string, ThumbnailImportBatch> _batches = [];
+        private readonly Dictionary<string, ThumbnailImportRun> _runs = [];
         private readonly Dictionary<string, ThumbnailRendition> _renditions = [];
         private readonly Dictionary<string, ThumbnailBatchItem> _items = [];
         private readonly Dictionary<string, StoredImageInfo> _metadata = [];
         public int JobInsertCount { get; private set; }
+        public int BatchInsertCount { get; private set; }
         public Task AddJobAsync(ThumbnailImportJob job, CancellationToken ct)
         { _jobs.Add(job.Id, job); JobInsertCount++; return Task.CompletedTask; }
         public Task<ThumbnailImportJob> AddJobIfMissingAsync(ThumbnailImportJob job, CancellationToken ct)
@@ -281,13 +379,30 @@ public sealed class ThumbnailImportTests
         public Task<IReadOnlyList<ThumbnailImportJob>> ListIncompleteJobsAsync(CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<ThumbnailImportJob>>(_jobs.Values.Where(x => x.Status is "pending" or "running").ToArray());
         public Task SaveJobAsync(ThumbnailImportJob job, CancellationToken ct) { _jobs[job.Id] = job; return Task.CompletedTask; }
-        public Task AddBatchAsync(ThumbnailImportBatch batch, CancellationToken ct) { _batches.Add(batch.Id, batch); return Task.CompletedTask; }
+        public Task AddBatchAsync(ThumbnailImportBatch batch, CancellationToken ct)
+        { _batches.Add(batch.Id, batch); BatchInsertCount++; return Task.CompletedTask; }
+        public async Task<ThumbnailImportBatch> AddBatchIfMissingAsync(ThumbnailImportBatch batch, CancellationToken ct)
+        {
+            if (_batches.TryGetValue(batch.Id, out var existing)) return existing;
+            await AddBatchAsync(batch, ct);
+            return batch;
+        }
         public Task<ThumbnailImportBatch?> GetBatchAsync(string id, CancellationToken ct) => Task.FromResult(_batches.GetValueOrDefault(id));
         public Task<IReadOnlyList<ThumbnailImportBatch>> ListBatchesAsync(int limit, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<ThumbnailImportBatch>>(_batches.Values.OrderByDescending(x => x.CreatedAt).Take(limit).ToArray());
         public Task<IReadOnlyList<ThumbnailImportBatch>> ListActiveBatchesAsync(CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<ThumbnailImportBatch>>(_batches.Values.Where(x => x.Status is "pending" or "running").ToArray());
+        public Task<IReadOnlyList<ThumbnailImportBatch>> ListRunBatchesAsync(string runId, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<ThumbnailImportBatch>>(_batches.Values.Where(x => x.ParentRunId == runId)
+                .OrderBy(x => x.StartOffset).ToArray());
         public Task SaveBatchAsync(ThumbnailImportBatch batch, CancellationToken ct) { _batches[batch.Id] = batch; return Task.CompletedTask; }
+        public Task AddRunAsync(ThumbnailImportRun run, CancellationToken ct) { _runs.Add(run.Id, run); return Task.CompletedTask; }
+        public Task<ThumbnailImportRun?> GetRunAsync(string id, CancellationToken ct) => Task.FromResult(_runs.GetValueOrDefault(id));
+        public Task<IReadOnlyList<ThumbnailImportRun>> ListRunsAsync(int limit, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<ThumbnailImportRun>>(_runs.Values.OrderByDescending(x => x.CreatedAt).Take(limit).ToArray());
+        public Task<IReadOnlyList<ThumbnailImportRun>> ListActiveRunsAsync(CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<ThumbnailImportRun>>(_runs.Values.Where(x => x.Status is "pending" or "running").ToArray());
+        public Task SaveRunAsync(ThumbnailImportRun run, CancellationToken ct) { _runs[run.Id] = run; return Task.CompletedTask; }
         public Task<ThumbnailBatchItem?> GetBatchItemAsync(string batchId, int offset, CancellationToken ct) =>
             Task.FromResult(_items.GetValueOrDefault($"{batchId}-{offset:D8}"));
         public Task<IReadOnlyList<ThumbnailBatchItem>> ListBatchItemsAsync(string batchId, CancellationToken ct) =>
@@ -309,11 +424,21 @@ public sealed class ThumbnailImportTests
     private sealed class FakeCatalog(string[] titles) : IImageCatalog
     {
         public int QueryCount { get; private set; }
+        public int SnapshotCount { get; private set; }
         public Task<ImageCatalogPage> QueryAsync(ImageSelection selection, int offset, int limit, CancellationToken ct)
         {
             QueryCount++;
             return Task.FromResult(new ImageCatalogPage(1, titles.Length, 0,
                 titles.Skip(offset).Take(limit).Select(x => new ImageCandidate(x, "Article", "taxobox")).ToArray()));
+        }
+
+        public async Task<int> SnapshotAsync(ImageSelection selection, int chunkSize,
+            Func<IReadOnlyList<ImageCandidate>, CancellationToken, Task> sink, CancellationToken ct)
+        {
+            SnapshotCount++;
+            foreach (var chunk in titles.Chunk(chunkSize))
+                await sink(chunk.Select(x => new ImageCandidate(x, "Article", "taxobox")).ToArray(), ct);
+            return titles.Length;
         }
     }
 

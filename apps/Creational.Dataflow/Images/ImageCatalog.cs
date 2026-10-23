@@ -10,6 +10,8 @@ namespace Creational.Dataflow.Images;
 public interface IImageCatalog
 {
     Task<ImageCatalogPage> QueryAsync(ImageSelection selection, int offset, int limit, CancellationToken cancellationToken);
+    Task<int> SnapshotAsync(ImageSelection selection, int chunkSize,
+        Func<IReadOnlyList<ImageCandidate>, CancellationToken, Task> sink, CancellationToken cancellationToken);
 }
 
 public sealed class ImageCatalog(ITargetRepository targets, IOutputManifestReader manifests,
@@ -28,6 +30,19 @@ public sealed class ImageCatalog(ITargetRepository targets, IOutputManifestReade
         {
             var root = await EnsureLocalAsync(cancellationToken);
             return await Task.Run(() => ImageCatalogQuery.Query(root, selection, offset, limit), cancellationToken);
+        }
+        finally { _gate.Release(); }
+    }
+
+    public async Task<int> SnapshotAsync(ImageSelection selection, int chunkSize,
+        Func<IReadOnlyList<ImageCandidate>, CancellationToken, Task> sink, CancellationToken cancellationToken)
+    {
+        await _gate.WaitAsync(cancellationToken);
+        try
+        {
+            var root = await EnsureLocalAsync(cancellationToken);
+            return await Task.Run(() => ImageCatalogQuery.StreamAsync(root, selection, chunkSize, sink,
+                cancellationToken), cancellationToken);
         }
         finally { _gate.Release(); }
     }

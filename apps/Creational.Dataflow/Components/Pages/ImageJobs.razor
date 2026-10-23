@@ -17,6 +17,25 @@
     }
     else
     {
+        <MudText Typo="Typo.h6">Import runs</MudText>
+        @if (_runs.Count == 0)
+        {
+            <MudText Color="Color.Secondary">No entire-selection imports have been scheduled yet.</MudText>
+        }
+        else
+        {
+            <MudTable Items="_runs" Dense="true" Hover="true" RowsPerPage="10">
+                <HeaderContent><MudTh>Created</MudTh><MudTh>Selection</MudTh><MudTh>Images</MudTh><MudTh>Progress</MudTh><MudTh>Status</MudTh></HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Created"><a href="@($"/image-runs/{context.Id}")">@context.CreatedAt.ToString("yyyy-MM-dd HH:mm 'UTC'")</a></MudTd>
+                    <MudTd DataLabel="Selection">@SelectionLabel(context.Selection)</MudTd>
+                    <MudTd DataLabel="Images">@context.TotalImages.ToString("N0")</MudTd>
+                    <MudTd DataLabel="Progress">@context.NextBatchIndex / @context.BatchCount batches</MudTd>
+                    <MudTd DataLabel="Status">@context.Status</MudTd>
+                </RowTemplate>
+                <PagerContent><MudTablePager /></PagerContent>
+            </MudTable>
+        }
         <MudText Typo="Typo.h6">Batches</MudText>
         @if (_batches.Count == 0)
         {
@@ -60,6 +79,7 @@
 </MudStack>
 
 @code {
+    private IReadOnlyList<ThumbnailImportRun> _runs = [];
     private IReadOnlyList<ThumbnailImportBatch> _batches = [];
     private IReadOnlyList<Creational.Dataflow.Images.ThumbnailImportJob> _standalone = [];
     private bool _loaded;
@@ -92,7 +112,9 @@
     {
         try
         {
-            _batches = await Imports.ListBatchesAsync(int.MaxValue, ct);
+            _runs = await Imports.ListRunsAsync(int.MaxValue, ct);
+            _batches = (await Imports.ListBatchesAsync(int.MaxValue, ct))
+                .Where(x => x.ParentRunId is null).ToArray();
             _standalone = await Imports.ListStandaloneJobsAsync(int.MaxValue, ct);
             _error = null;
             _loaded = true;

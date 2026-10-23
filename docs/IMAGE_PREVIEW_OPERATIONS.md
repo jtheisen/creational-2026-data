@@ -17,6 +17,16 @@ restart. The `/image-jobs` page lists
 past and current batches and individual jobs. See [collection import operations](COLLECTION_IMPORT_OPERATIONS.md#first-thumbnail-import)
 for job and Blob details.
 
+The “Import all candidates” action handles selections larger than 1,000.
+It scans the catalog once and writes deterministic manifests for consecutive
+1,000-image batches before publishing a parent import run. The hosted importer
+starts one child batch at a time and advances the persisted parent cursor after
+each child completes. The `/image-jobs` page links to each run, and a run page
+shows overall copied, skipped, and failed totals plus its child batches. A
+failed image is counted and processing continues; the run ends with errors if
+any child has failed images. The action must be clicked explicitly and is not
+part of collection import.
+
 The unified batch page shows every image from its saved manifest. Its All,
 In progress, Skipped, and Pending selector filters thumbnail work: Skipped
 means that a current thumbnail was reused, even if imageinfo was fetched.

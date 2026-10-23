@@ -15,10 +15,17 @@ public interface IThumbnailImportRepository
     Task<IReadOnlyList<ThumbnailImportJob>> ListIncompleteJobsAsync(CancellationToken ct);
     Task SaveJobAsync(ThumbnailImportJob job, CancellationToken ct);
     Task AddBatchAsync(ThumbnailImportBatch batch, CancellationToken ct);
+    Task<ThumbnailImportBatch> AddBatchIfMissingAsync(ThumbnailImportBatch batch, CancellationToken ct);
     Task<ThumbnailImportBatch?> GetBatchAsync(string id, CancellationToken ct);
     Task<IReadOnlyList<ThumbnailImportBatch>> ListBatchesAsync(int limit, CancellationToken ct);
     Task<IReadOnlyList<ThumbnailImportBatch>> ListActiveBatchesAsync(CancellationToken ct);
+    Task<IReadOnlyList<ThumbnailImportBatch>> ListRunBatchesAsync(string runId, CancellationToken ct);
     Task SaveBatchAsync(ThumbnailImportBatch batch, CancellationToken ct);
+    Task AddRunAsync(ThumbnailImportRun run, CancellationToken ct);
+    Task<ThumbnailImportRun?> GetRunAsync(string id, CancellationToken ct);
+    Task<IReadOnlyList<ThumbnailImportRun>> ListRunsAsync(int limit, CancellationToken ct);
+    Task<IReadOnlyList<ThumbnailImportRun>> ListActiveRunsAsync(CancellationToken ct);
+    Task SaveRunAsync(ThumbnailImportRun run, CancellationToken ct);
     Task<ThumbnailBatchItem?> GetBatchItemAsync(string batchId, int offset, CancellationToken ct);
     Task<IReadOnlyList<ThumbnailBatchItem>> ListBatchItemsAsync(string batchId, CancellationToken ct);
     Task SaveBatchItemAsync(ThumbnailBatchItem item, CancellationToken ct);
@@ -33,6 +40,7 @@ public sealed class ThumbnailImportRepository(TableClient table) : IThumbnailImp
 {
     private const string Jobs = "__thumbnail_jobs";
     private const string Batches = "__thumbnail_batches";
+    private const string Runs = "__thumbnail_runs";
     private const string Renditions = "__thumbnail_renditions";
     private const string Assets = "__thumbnail_assets";
     private const string BatchItems = "__thumbnail_batch_items";
@@ -99,6 +107,16 @@ public sealed class ThumbnailImportRepository(TableClient table) : IThumbnailImp
     public async Task AddBatchAsync(ThumbnailImportBatch batch, CancellationToken ct) =>
         await table.AddEntityAsync(BatchEntity(batch), ct);
 
+    public async Task<ThumbnailImportBatch> AddBatchIfMissingAsync(ThumbnailImportBatch batch, CancellationToken ct)
+    {
+        try { await AddBatchAsync(batch, ct); return batch; }
+        catch (RequestFailedException error) when (error.Status == 409)
+        {
+            return await GetBatchAsync(batch.Id, ct) ??
+                throw new InvalidOperationException("Image batch disappeared after a duplicate insert.");
+        }
+    }
+
     public async Task<ThumbnailImportBatch?> GetBatchAsync(string id, CancellationToken ct)
     {
         var row = await table.GetEntityIfExistsAsync<TableEntity>(Batches, id, cancellationToken: ct);
@@ -120,8 +138,48 @@ public sealed class ThumbnailImportRepository(TableClient table) : IThumbnailImp
             .OrderBy(x => x.CreatedAt).ToArray();
     }
 
+    public async Task<IReadOnlyList<ThumbnailImportBatch>> ListRunBatchesAsync(string runId, CancellationToken ct)
+    {
+        var batches = new List<ThumbnailImportBatch>();
+        var id = runId.Replace("'", "''", StringComparison.Ordinal);
+        await foreach (var row in table.QueryAsync<TableEntity>(
+            filter: $"PartitionKey eq '__thumbnail_batches' and RowKey ge '{id}-' and RowKey lt '{id}.'",
+            cancellationToken: ct))
+        {
+            var batch = ReadBatch(row);
+            if (batch.ParentRunId == runId) batches.Add(batch);
+        }
+        return batches.OrderBy(x => x.StartOffset).ToArray();
+    }
+
     public async Task SaveBatchAsync(ThumbnailImportBatch batch, CancellationToken ct) =>
         await table.UpsertEntityAsync(BatchEntity(batch), TableUpdateMode.Replace, ct);
+
+    public async Task AddRunAsync(ThumbnailImportRun run, CancellationToken ct) =>
+        await table.AddEntityAsync(RunEntity(run), ct);
+
+    public async Task<ThumbnailImportRun?> GetRunAsync(string id, CancellationToken ct)
+    {
+        var row = await table.GetEntityIfExistsAsync<TableEntity>(Runs, id, cancellationToken: ct);
+        return row.HasValue ? ReadRun(row.Value!) : null;
+    }
+
+    public async Task<IReadOnlyList<ThumbnailImportRun>> ListRunsAsync(int limit, CancellationToken ct)
+    {
+        var runs = new List<ThumbnailImportRun>();
+        await foreach (var row in table.QueryAsync<TableEntity>(filter: "PartitionKey eq '__thumbnail_runs'",
+            cancellationToken: ct)) runs.Add(ReadRun(row));
+        return runs.OrderByDescending(x => x.CreatedAt).Take(limit).ToArray();
+    }
+
+    public async Task<IReadOnlyList<ThumbnailImportRun>> ListActiveRunsAsync(CancellationToken ct)
+    {
+        var runs = await ListRunsAsync(int.MaxValue, ct);
+        return runs.Where(x => x.Status is "pending" or "running").OrderBy(x => x.CreatedAt).ToArray();
+    }
+
+    public async Task SaveRunAsync(ThumbnailImportRun run, CancellationToken ct) =>
+        await table.UpsertEntityAsync(RunEntity(run), TableUpdateMode.Replace, ct);
 
     public async Task<ThumbnailBatchItem?> GetBatchItemAsync(string batchId, int offset, CancellationToken ct)
     {
@@ -284,6 +342,7 @@ public sealed class ThumbnailImportRepository(TableClient table) : IThumbnailImp
         ["SkippedImages"] = batch.SkippedImages,
         ["FailedImages"] = batch.FailedImages,
         ["ManifestPath"] = batch.ManifestPath ?? "",
+        ["ParentRunId"] = batch.ParentRunId ?? "",
         ["Error"] = batch.Error ?? ""
     };
 
@@ -296,9 +355,36 @@ public sealed class ThumbnailImportRepository(TableClient table) : IThumbnailImp
         string.IsNullOrEmpty(row.GetString("Error")) ? null : row.GetString("Error"))
     {
         ManifestPath = string.IsNullOrEmpty(row.GetString("ManifestPath")) ? null : row.GetString("ManifestPath"),
+        ParentRunId = string.IsNullOrEmpty(row.GetString("ParentRunId")) ? null : row.GetString("ParentRunId"),
         Width = row.GetInt32("Width") ?? 250,
         CopiedImages = row.GetInt32("CopiedImages") ?? 0,
         SkippedImages = row.GetInt32("SkippedImages") ?? 0,
         FailedImages = row.GetInt32("FailedImages") ?? 0
+    };
+
+    private static TableEntity RunEntity(ThumbnailImportRun run) => new(Runs, run.Id)
+    {
+        ["SelectionKind"] = run.Selection.Kind.ToString(),
+        ["SelectionValue"] = run.Selection.Value,
+        ["TotalImages"] = run.TotalImages,
+        ["NextBatchIndex"] = run.NextBatchIndex,
+        ["Status"] = run.Status,
+        ["CreatedAt"] = run.CreatedAt,
+        ["Width"] = run.Width,
+        ["CopiedImages"] = run.CopiedImages,
+        ["SkippedImages"] = run.SkippedImages,
+        ["FailedImages"] = run.FailedImages,
+        ["Error"] = run.Error ?? ""
+    };
+
+    private static ThumbnailImportRun ReadRun(TableEntity row) => new(row.RowKey,
+        new ImageSelection(Enum.Parse<ImageSelectionKind>(row.GetString("SelectionKind")!),
+            row.GetString("SelectionValue")!),
+        row.GetInt32("TotalImages")!.Value, row.GetInt32("NextBatchIndex")!.Value,
+        row.GetString("Status")!, row.GetDateTimeOffset("CreatedAt")!.Value,
+        row.GetInt32("CopiedImages") ?? 0, row.GetInt32("SkippedImages") ?? 0,
+        row.GetInt32("FailedImages") ?? 0, EmptyToNull(row.GetString("Error")))
+    {
+        Width = row.GetInt32("Width") ?? 250
     };
 }

@@ -85,6 +85,25 @@ if (args.Length == 4 && args[0] == "--schedule-image-batch")
     return;
 }
 
+if (args.Length == 2 && args[0] == "--schedule-image-run")
+{
+    var selection = ImageSelection.Parse(args[1]);
+    var tableService = new TableServiceClient(new Uri(accountUrl.Replace(".blob.", ".table.", StringComparison.OrdinalIgnoreCase)), credential);
+    var table = tableService.GetTableClient("CollectionTargets");
+    var shards = await new SourceManifestLoader(blobStore).LoadAsync(CancellationToken.None);
+    var catalog = new ImageCatalog(new TableTargetRepository(table),
+        new AzureOutputManifestReader(blobStore), blobStore, shards);
+    using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+    var pacer = new WikimediaRequestPacer();
+    var service = new ThumbnailImportService(new ThumbnailImportRepository(table),
+        new ThumbnailBlobCopier(http, blobService, pacer), new WikimediaImageInfo(http, null, pacer),
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<ThumbnailImportService>.Instance,
+        catalog, new AzureThumbnailBatchManifestStore(blobService));
+    var id = await service.CreateRunAsync(selection, CancellationToken.None);
+    Console.WriteLine(JsonSerializer.Serialize(await service.GetRunAsync(id, CancellationToken.None)));
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddMudServices();
