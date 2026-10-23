@@ -6,6 +6,9 @@ namespace Creational.Dataflow.Images;
 public sealed record ThumbnailImportJob(string Id, int Width, string[] Titles, string Status,
     DateTimeOffset CreatedAt, string? Error = null)
 {
+    public string? BatchId { get; init; }
+    public int? StartOffset { get; init; }
+
     public static ThumbnailImportJob Create(IReadOnlyList<string> titles, int width)
     {
         if (width is < 1 or > 2048) throw new ArgumentOutOfRangeException(nameof(width));
@@ -14,6 +17,24 @@ public sealed record ThumbnailImportJob(string Id, int Width, string[] Titles, s
         if (distinct.Length is < 1 or > 24 || distinct.Length != titles.Count)
             throw new ArgumentException("Select between 1 and 24 distinct image titles.", nameof(titles));
         return new(Guid.NewGuid().ToString("N"), width, distinct, "pending", DateTimeOffset.UtcNow);
+    }
+}
+
+public sealed record ThumbnailImportBatch(string Id, ImageSelection Selection, int StartOffset,
+    int RequestedCount, int NextOffset, string Status, DateTimeOffset CreatedAt,
+    int FailedJobs = 0, string? Error = null)
+{
+    public int EndOffset => checked(StartOffset + RequestedCount);
+
+    public string ChildId(int offset) => $"{Id}-{offset:D8}";
+
+    public static ThumbnailImportBatch Create(ImageSelection selection, int offset, int count)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        if (count is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(count));
+        _ = checked(offset + count);
+        return new(Guid.NewGuid().ToString("N"), selection, offset, count, offset,
+            "pending", DateTimeOffset.UtcNow);
     }
 }
 

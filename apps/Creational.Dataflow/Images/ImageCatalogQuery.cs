@@ -19,7 +19,7 @@ public static class ImageCatalogQuery
     public static ImageCatalogPage Query(string root, ImageSelection selection, int offset, int limit)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(offset);
-        if (limit is < 1 or > 48) throw new ArgumentOutOfRangeException(nameof(limit));
+        if (limit is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(limit));
 
         string PathSql(string relative) => Quote(Path.Combine(root, relative).Replace('\\', '/'));
         var articles = PathSql("parse/*/articles.parquet");

@@ -7,8 +7,13 @@ using Creational.Dataflow.Targets;
 
 namespace Creational.Dataflow.Images;
 
+public interface IImageCatalog
+{
+    Task<ImageCatalogPage> QueryAsync(ImageSelection selection, int offset, int limit, CancellationToken cancellationToken);
+}
+
 public sealed class ImageCatalog(ITargetRepository targets, IOutputManifestReader manifests,
-    IBlobStore blobs, IReadOnlyList<ManifestShard> shards)
+    IBlobStore blobs, IReadOnlyList<ManifestShard> shards) : IImageCatalog
 {
     private const string EdgesMarker = "https://creational.blob.core.windows.net/wikimedia-extracts/enwiki/2026-10-01/image-preview-catalog-v1/ott3.3/_COMPLETE.json";
     private readonly SemaphoreSlim _gate = new(1, 1);

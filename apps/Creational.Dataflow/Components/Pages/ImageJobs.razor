@@ -1,0 +1,113 @@
+@page "/image-jobs"
+@implements IAsyncDisposable
+@using Creational.Dataflow.Images
+@inject ThumbnailImportService Imports
+
+<MudStack Spacing="3">
+    <MudBreadcrumbs Items="_breadcrumbs" />
+    <MudText Typo="Typo.h4">Image jobs</MudText>
+    <MudButton Href="/images" Variant="Variant.Outlined" Color="Color.Primary">Preview and schedule images</MudButton>
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error">@_error</MudAlert>
+    }
+    @if (!_loaded)
+    {
+        <MudProgressCircular Indeterminate="true" />
+    }
+    else
+    {
+        <MudText Typo="Typo.h6">Batches</MudText>
+        @if (_batches.Count == 0)
+        {
+            <MudText Color="Color.Secondary">No image batches have been scheduled yet.</MudText>
+        }
+        else
+        {
+            <MudTable Items="_batches" Dense="true" Hover="true" RowsPerPage="10">
+                <HeaderContent>
+                    <MudTh>Created</MudTh><MudTh>Selection</MudTh><MudTh>Range</MudTh><MudTh>Progress</MudTh><MudTh>Status</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Created"><a href="@($"/image-batches/{context.Id}")">@context.CreatedAt.ToString("yyyy-MM-dd HH:mm 'UTC'")</a></MudTd>
+                    <MudTd DataLabel="Selection">@SelectionLabel(context.Selection)</MudTd>
+                    <MudTd DataLabel="Range">@((context.StartOffset + 1).ToString("N0"))–@context.EndOffset.ToString("N0")</MudTd>
+                    <MudTd DataLabel="Progress">@((context.NextOffset - context.StartOffset).ToString("N0")) / @context.RequestedCount.ToString("N0")</MudTd>
+                    <MudTd DataLabel="Status">@context.Status</MudTd>
+                </RowTemplate>
+                <PagerContent><MudTablePager /></PagerContent>
+            </MudTable>
+        }
+        <MudText Typo="Typo.h6">Individual jobs</MudText>
+        @if (_standalone.Count == 0)
+        {
+            <MudText Color="Color.Secondary">No individual image jobs have been started yet.</MudText>
+        }
+        else
+        {
+            <MudTable Items="_standalone" Dense="true" Hover="true" RowsPerPage="10">
+                <HeaderContent><MudTh>Created</MudTh><MudTh>File</MudTh><MudTh>Images</MudTh><MudTh>Status</MudTh></HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Created"><a href="@($"/image-jobs/{context.Id}")">@context.CreatedAt.ToString("yyyy-MM-dd HH:mm 'UTC'")</a></MudTd>
+                    <MudTd DataLabel="File">@context.Titles[0]</MudTd>
+                    <MudTd DataLabel="Images">@context.Titles.Length</MudTd>
+                    <MudTd DataLabel="Status">@context.Status</MudTd>
+                </RowTemplate>
+                <PagerContent><MudTablePager /></PagerContent>
+            </MudTable>
+        }
+    }
+</MudStack>
+
+@code {
+    private IReadOnlyList<ThumbnailImportBatch> _batches = [];
+    private IReadOnlyList<Creational.Dataflow.Images.ThumbnailImportJob> _standalone = [];
+    private bool _loaded;
+    private string? _error;
+    private CancellationTokenSource? _stop;
+    private readonly List<BreadcrumbItem> _breadcrumbs =
+        [new("Collections", "/"), new("Image jobs", null, true)];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _stop = new CancellationTokenSource();
+        await RefreshAsync(_stop.Token);
+        _ = PollAsync(_stop.Token);
+    }
+
+    private async Task PollAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(10), ct);
+                await InvokeAsync(async () => { await RefreshAsync(ct); StateHasChanged(); });
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
+    private async Task RefreshAsync(CancellationToken ct)
+    {
+        try
+        {
+            _batches = await Imports.ListBatchesAsync(int.MaxValue, ct);
+            _standalone = await Imports.ListStandaloneJobsAsync(int.MaxValue, ct);
+            _error = null;
+            _loaded = true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception error) { _error = error.Message; }
+    }
+
+    private static string SelectionLabel(ImageSelection selection) => selection.Kind == ImageSelectionKind.OttBranch
+        ? $"OTT {selection.Value}" : $"Wikipedia: {selection.Value}";
+
+    public ValueTask DisposeAsync()
+    {
+        _stop?.Cancel();
+        _stop?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

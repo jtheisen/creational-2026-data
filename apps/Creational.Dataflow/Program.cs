@@ -57,9 +57,20 @@ if (args.Length == 2 && args[0] == "--import-thumbnail-once")
         new WikimediaImageInfo(http, userAgent, pacer),
         Microsoft.Extensions.Logging.Abstractions.NullLogger<ThumbnailImportService>.Instance);
     var id = await service.CreateJobAsync([args[1]], CancellationToken.None);
-    await service.ProcessPendingAsync(CancellationToken.None);
+    await service.ProcessJobAsync(id, CancellationToken.None);
     Console.WriteLine(JsonSerializer.Serialize(new { id, job = await service.GetJobAsync(id, CancellationToken.None),
         renditions = await service.GetRenditionsAsync((await service.GetJobAsync(id, CancellationToken.None))!, CancellationToken.None) }));
+    return;
+}
+
+if (args.Length == 4 && args[0] == "--schedule-image-batch")
+{
+    var selection = ImageSelection.Parse(args[1]);
+    var batch = ThumbnailImportBatch.Create(selection, int.Parse(args[2]), int.Parse(args[3]));
+    var tableService = new TableServiceClient(new Uri(accountUrl.Replace(".blob.", ".table.", StringComparison.OrdinalIgnoreCase)), credential);
+    await new ThumbnailImportRepository(tableService.GetTableClient("CollectionTargets"))
+        .AddBatchAsync(batch, CancellationToken.None);
+    Console.WriteLine(JsonSerializer.Serialize(batch));
     return;
 }
 
@@ -81,6 +92,7 @@ builder.Services.AddSingleton<ITargetRepository, TableTargetRepository>();
 builder.Services.AddSingleton<ICollectionSettingsRepository, TableCollectionSettingsRepository>();
 builder.Services.AddSingleton<IOutputManifestReader, AzureOutputManifestReader>();
 builder.Services.AddSingleton<ImageCatalog>();
+builder.Services.AddSingleton<IImageCatalog>(sp => sp.GetRequiredService<ImageCatalog>());
 builder.Services.AddSingleton(sp => new WorkInputBuilder(sp.GetRequiredService<IOutputManifestReader>(),
     webShards, blobStore));
 var queueUrl = accountUrl.Replace(".blob.", ".queue.", StringComparison.OrdinalIgnoreCase) + "/collection-work";
@@ -102,7 +114,12 @@ builder.Services.AddSingleton<IThumbnailBlobCopier>(sp =>
         "CreationalDataflow/1.0 (https://github.com/jtheisen/creational-2026-data)");
     return new ThumbnailBlobCopier(http, blobService, sp.GetRequiredService<WikimediaRequestPacer>());
 });
-builder.Services.AddSingleton<ThumbnailImportService>();
+builder.Services.AddSingleton(sp => new ThumbnailImportService(
+    sp.GetRequiredService<IThumbnailImportRepository>(),
+    sp.GetRequiredService<IThumbnailBlobCopier>(),
+    sp.GetRequiredService<WikimediaImageInfo>(),
+    sp.GetRequiredService<ILogger<ThumbnailImportService>>(),
+    sp.GetRequiredService<IImageCatalog>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ThumbnailImportService>());
 builder.Services.AddSingleton<IStreamingCopier>(sp =>
 {

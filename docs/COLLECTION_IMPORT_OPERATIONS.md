@@ -25,8 +25,25 @@ The Blob path is `thumbnails/250px/<hash-prefix>/<title-hash>/<filename>` in
 When a rendition is marked stale, a replacement is uploaded and verified before
 the prior version is deleted under Blob soft-delete retention. That exact-version
 delete requires `Storage Blob Data Owner` on the container; the App Service
-identity has this role. This first slice does not yet expose a stale toggle or
-bulk subtree import.
+identity has this role. A stale toggle and whole-subtree import remain future
+work.
+
+The image preview also offers a bounded batch action, starting at its current
+page with a count of 1–1,000 (default 100). A batch row persists the selection,
+offset, and cursor; the hosted importer generates deterministic child jobs of
+up to 24 images. The cursor advances only when a child job finishes, so the
+batch can resume after a process restart without duplicating jobs. `/image-jobs`
+lists batches and older standalone jobs; each batch links to its child jobs.
+At the current one-request-per-second Wikimedia pace, a 1,000-image batch may
+take many minutes or hours. An entire large clade still needs successive
+non-overlapping ranges.
+
+A bounded operational batch can be scheduled from an Azure CLI authenticated
+machine without keeping its process open:
+
+```sh
+AZURE_TOKEN_CREDENTIALS=AzureCliCredential dotnet run --project apps/Creational.Dataflow -- --schedule-image-batch 114168 0 30
+```
 
 For a one-file operational canary from a machine with Azure CLI data roles:
 

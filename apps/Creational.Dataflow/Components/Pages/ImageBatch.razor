@@ -1,0 +1,103 @@
+@page "/image-batches/{Id}"
+@implements IAsyncDisposable
+@using Creational.Dataflow.Images
+@inject ThumbnailImportService Imports
+
+<MudStack Spacing="3">
+    <MudBreadcrumbs Items="_breadcrumbs" />
+    <MudText Typo="Typo.h4">Image batch</MudText>
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error">@_error</MudAlert>
+    }
+    else if (_batch is null)
+    {
+        <MudProgressCircular Indeterminate="true" />
+    }
+    else
+    {
+        <MudPaper Class="pa-4">
+            <MudStack Spacing="1">
+                <MudText>Selection: @SelectionLabel · images @(_batch.StartOffset + 1)–@_batch.EndOffset · width 250px</MudText>
+                <MudText>Status: @_batch.Status · @_finished.ToString("N0") of @_batch.RequestedCount.ToString("N0") finished · @_batch.FailedJobs failed child jobs</MudText>
+                <MudProgressLinear Color="Color.Primary" Value="@Progress" />
+                @if (_batch.Error is not null)
+                {
+                    <MudText Color="Color.Error">@_batch.Error</MudText>
+                }
+            </MudStack>
+        </MudPaper>
+        <MudText Typo="Typo.h6">Child jobs</MudText>
+        @if (_jobs.Count == 0)
+        {
+            <MudText Color="Color.Secondary">The first child job will appear when scheduling starts.</MudText>
+        }
+        else
+        {
+            <MudTable Items="_jobs" Dense="true" Hover="true" RowsPerPage="10">
+                <HeaderContent><MudTh>Range</MudTh><MudTh>Images</MudTh><MudTh>Status</MudTh><MudTh>Created</MudTh></HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Range"><a href="@($"/image-jobs/{context.Id}")">@((context.StartOffset ?? 0) + 1)–@((context.StartOffset ?? 0) + context.Titles.Length)</a></MudTd>
+                    <MudTd DataLabel="Images">@context.Titles.Length</MudTd>
+                    <MudTd DataLabel="Status">@context.Status</MudTd>
+                    <MudTd DataLabel="Created">@context.CreatedAt.ToString("yyyy-MM-dd HH:mm 'UTC'")</MudTd>
+                </RowTemplate>
+                <PagerContent><MudTablePager /></PagerContent>
+            </MudTable>
+        }
+    }
+</MudStack>
+
+@code {
+    [Parameter] public string Id { get; set; } = "";
+    private ThumbnailImportBatch? _batch;
+    private IReadOnlyList<Creational.Dataflow.Images.ThumbnailImportJob> _jobs = [];
+    private string? _error;
+    private CancellationTokenSource? _stop;
+    private int _finished => _batch is null ? 0 : _batch.NextOffset - _batch.StartOffset;
+    private double Progress => _batch is null ? 0 : 100.0 * _finished / _batch.RequestedCount;
+    private string SelectionLabel => _batch?.Selection.Kind == ImageSelectionKind.OttBranch
+        ? $"OTT {_batch.Selection.Value}" : $"Wikipedia: {_batch?.Selection.Value}";
+    private readonly List<BreadcrumbItem> _breadcrumbs =
+        [new("Collections", "/"), new("Image jobs", "/image-jobs"), new("Batch", null, true)];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _stop = new CancellationTokenSource();
+        await RefreshAsync(_stop.Token);
+        _ = PollAsync(_stop.Token);
+    }
+
+    private async Task PollAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(5), ct);
+                await InvokeAsync(async () => { await RefreshAsync(ct); StateHasChanged(); });
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
+    private async Task RefreshAsync(CancellationToken ct)
+    {
+        try
+        {
+            _batch = await Imports.GetBatchAsync(Id, ct);
+            if (_batch is null) { _error = "Image batch was not found."; return; }
+            _jobs = await Imports.ListBatchJobsAsync(Id, ct);
+            _error = null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception error) { _error = error.Message; }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _stop?.Cancel();
+        _stop?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}
