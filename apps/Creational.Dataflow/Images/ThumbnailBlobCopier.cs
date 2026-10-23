@@ -41,9 +41,11 @@ public sealed class ThumbnailBlobCopier(HttpClient http, BlobServiceClient servi
         var blob = _container.GetBlobClient(rendition.BlobName);
         if (!(await blob.ExistsAsync(ct)).Value) return null;
         var properties = (await blob.GetPropertiesAsync(cancellationToken: ct)).Value;
-        return properties.ContentLength > 0 && properties.Metadata.TryGetValue("sha256", out var hash) &&
-            (!rendition.Stale || !string.Equals(hash, rendition.Sha256, StringComparison.OrdinalIgnoreCase))
-            ? new ThumbnailCopyResult(properties.ContentLength, hash) : null;
+        if (properties.ContentLength <= 0 || !properties.Metadata.TryGetValue("sha256", out var hash) ||
+            (rendition.Stale && string.Equals(hash, rendition.Sha256, StringComparison.OrdinalIgnoreCase)))
+            return null;
+        if (!await ContentMatchesAsync(blob, hash, ct)) return null;
+        return new ThumbnailCopyResult(properties.ContentLength, hash);
     }
 
     public async Task<ThumbnailCopyResult> CopyAsync(string sourceUrl, ThumbnailRendition rendition, CancellationToken ct)
@@ -84,9 +86,19 @@ public sealed class ThumbnailBlobCopier(HttpClient http, BlobServiceClient servi
         var committed = (await blob.GetPropertiesAsync(cancellationToken: ct)).Value;
         if (committed.ContentLength != buffer.Length || !committed.Metadata.TryGetValue("sha256", out var recorded) || recorded != hash)
             throw new InvalidOperationException("The uploaded thumbnail did not verify.");
+        if (!await ContentMatchesAsync(blob, hash, ct))
+            throw new InvalidOperationException("The uploaded thumbnail content checksum did not verify.");
         if (old is not null)
             await blob.WithVersion(old.VersionId).DeleteIfExistsAsync(cancellationToken: ct);
         return new(buffer.Length, hash);
+    }
+
+    private static async Task<bool> ContentMatchesAsync(BlobClient blob, string hash, CancellationToken ct)
+    {
+        var downloaded = await blob.DownloadStreamingAsync(cancellationToken: ct);
+        await using var stream = downloaded.Value.Content;
+        var actualHash = Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)).ToLowerInvariant();
+        return string.Equals(actualHash, hash, StringComparison.OrdinalIgnoreCase);
     }
 
     private async Task<HttpResponseMessage> GetAllowedAsync(Uri url, CancellationToken ct)
