@@ -101,6 +101,97 @@ public sealed class ThumbnailImportTests
     }
 
     [Fact]
+    public async Task SchedulingBatchFreezesItsImageListBeforePublishing()
+    {
+        var catalog = new FakeCatalog(["File:First.jpg", "File:Second.jpg"]);
+        var repository = new MemoryRepository();
+        var manifests = new MemoryManifestStore();
+        using var http = new HttpClient(new MetadataHandler());
+        var service = new ThumbnailImportService(repository, new FakeCopier(),
+            new WikimediaImageInfo(http, "CreationalDataflow/1.0 (contact: test@example.org)"),
+            NullLogger<ThumbnailImportService>.Instance, catalog, manifests);
+
+        var id = await service.CreateBatchAsync(ImageSelection.Parse("691846"), 0, 2, CancellationToken.None);
+
+        Assert.Equal(1, catalog.QueryCount);
+        var batch = await service.GetBatchAsync(id, CancellationToken.None);
+        Assert.Equal($"image-jobs/batches/{id}/manifest.json", batch!.ManifestPath);
+        Assert.Equal(["File:First.jpg", "File:Second.jpg"],
+            (await manifests.ReadAsync(batch.ManifestPath!, CancellationToken.None)).Images.Select(x => x.FileTitle));
+    }
+
+    [Fact]
+    public async Task ImageInfoIsFetchedOnceForSeveralImagesAndReused()
+    {
+        var repository = new MemoryRepository();
+        var handler = new MetadataHandler();
+        using var http = new HttpClient(handler);
+        var blobs = new MemoryInfoSnapshotStore();
+        var store = new ImageInfoStore(repository,
+            new WikimediaImageInfo(http, "CreationalDataflow/1.0 (contact: test@example.org)"), blobs);
+        var candidates = new[]
+        {
+            new ImageCandidate("File:A.jpg", "A", "taxobox", "commonswiki"),
+            new ImageCandidate("File:B.jpg", "B", "taxobox", "commonswiki")
+        };
+
+        await store.EnsureAsync(candidates, CancellationToken.None);
+        await store.EnsureAsync(candidates, CancellationToken.None);
+
+        Assert.Equal(1, handler.RequestCount);
+        Assert.Equal(2, blobs.SavedCount);
+        Assert.Equal("complete", (await repository.GetImageInfoAsync("File:A.jpg", CancellationToken.None))!.Status);
+    }
+
+    [Fact]
+    public async Task UnifiedBatchCopiesImagesWithoutCreatingChildJobs()
+    {
+        var titles = Enumerable.Range(0, 25).Select(x => $"File:Image {x}.jpg").ToArray();
+        var repository = new MemoryRepository();
+        var copier = new FakeCopier();
+        var catalog = new FakeCatalog(titles);
+        var manifests = new MemoryManifestStore();
+        using var http = new HttpClient(new MetadataHandler());
+        var service = new ThumbnailImportService(repository, copier,
+            new WikimediaImageInfo(http, "CreationalDataflow/1.0 (contact: test@example.org)"),
+            NullLogger<ThumbnailImportService>.Instance, catalog, manifests, new FakeInfoStore());
+        var id = await service.CreateBatchAsync(ImageSelection.Parse("691846"), 0, 25, CancellationToken.None);
+
+        await service.ProcessPendingAsync(CancellationToken.None);
+
+        var batch = (await service.GetBatchAsync(id, CancellationToken.None))!;
+        Assert.Equal("complete", batch.Status);
+        Assert.Equal(25, batch.CopiedImages);
+        Assert.Equal(25, batch.NextOffset);
+        Assert.Empty(await service.ListBatchJobsAsync(id, CancellationToken.None));
+        Assert.Equal(25, (await repository.ListBatchItemsAsync(id, CancellationToken.None)).Count);
+        Assert.Equal(25, copier.Copied.Count);
+    }
+
+    [Fact]
+    public async Task UnifiedBatchRestartAdvancesPersistedItemWithoutCopyingItAgain()
+    {
+        var repository = new MemoryRepository();
+        var manifests = new MemoryManifestStore();
+        var catalog = new FakeCatalog(["File:Already.jpg", "File:Next.jpg"]);
+        var copier = new FakeCopier();
+        using var http = new HttpClient(new MetadataHandler());
+        var service = new ThumbnailImportService(repository, copier,
+            new WikimediaImageInfo(http, "CreationalDataflow/1.0 (contact: test@example.org)"),
+            NullLogger<ThumbnailImportService>.Instance, catalog, manifests, new FakeInfoStore());
+        var id = await service.CreateBatchAsync(ImageSelection.Parse("691846"), 0, 2, CancellationToken.None);
+        await repository.SaveBatchItemAsync(new(id, 0, "File:Already.jpg", "copied", 10), CancellationToken.None);
+
+        await service.ProcessPendingAsync(CancellationToken.None);
+
+        var batch = (await repository.GetBatchAsync(id, CancellationToken.None))!;
+        Assert.Equal("complete", batch.Status);
+        Assert.Equal(2, batch.NextOffset);
+        Assert.Equal(2, batch.CopiedImages);
+        Assert.Equal(["File:Next.jpg"], copier.Copied);
+    }
+
+    [Fact]
     public async Task BatchRestartAdvancesPastExistingChildWithoutDuplicatingIt()
     {
         var titles = Enumerable.Range(0, 25).Select(x => $"File:Image {x}.jpg").ToArray();
@@ -150,6 +241,8 @@ public sealed class ThumbnailImportTests
         private readonly Dictionary<string, ThumbnailImportJob> _jobs = [];
         private readonly Dictionary<string, ThumbnailImportBatch> _batches = [];
         private readonly Dictionary<string, ThumbnailRendition> _renditions = [];
+        private readonly Dictionary<string, ThumbnailBatchItem> _items = [];
+        private readonly Dictionary<string, StoredImageInfo> _metadata = [];
         public int JobInsertCount { get; private set; }
         public Task AddJobAsync(ThumbnailImportJob job, CancellationToken ct)
         { _jobs.Add(job.Id, job); JobInsertCount++; return Task.CompletedTask; }
@@ -173,11 +266,22 @@ public sealed class ThumbnailImportTests
         public Task<IReadOnlyList<ThumbnailImportBatch>> ListActiveBatchesAsync(CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<ThumbnailImportBatch>>(_batches.Values.Where(x => x.Status is "pending" or "running").ToArray());
         public Task SaveBatchAsync(ThumbnailImportBatch batch, CancellationToken ct) { _batches[batch.Id] = batch; return Task.CompletedTask; }
+        public Task<ThumbnailBatchItem?> GetBatchItemAsync(string batchId, int offset, CancellationToken ct) =>
+            Task.FromResult(_items.GetValueOrDefault($"{batchId}-{offset:D8}"));
+        public Task<IReadOnlyList<ThumbnailBatchItem>> ListBatchItemsAsync(string batchId, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<ThumbnailBatchItem>>(_items.Values.Where(x => x.BatchId == batchId)
+                .OrderBy(x => x.Offset).ToArray());
+        public Task SaveBatchItemAsync(ThumbnailBatchItem item, CancellationToken ct)
+        { _items[item.RowKey] = item; return Task.CompletedTask; }
         public Task<ThumbnailRendition?> GetRenditionAsync(string title, int width, CancellationToken ct) =>
             Task.FromResult(_renditions.GetValueOrDefault(ThumbnailIdentity.For(title, width).RowKey));
         public Task SaveRenditionAsync(ThumbnailRendition row, CancellationToken ct)
         { _renditions[row.RowKey] = row; return Task.CompletedTask; }
         public Task EnsureAssetAsync(string title, CancellationToken ct) => Task.CompletedTask;
+        public Task<StoredImageInfo?> GetImageInfoAsync(string title, CancellationToken ct) =>
+            Task.FromResult(_metadata.GetValueOrDefault(title));
+        public Task SaveImageInfoAsync(StoredImageInfo info, CancellationToken ct)
+        { _metadata[info.Title] = info; return Task.CompletedTask; }
     }
 
     private sealed class FakeCatalog(string[] titles) : IImageCatalog
@@ -202,10 +306,29 @@ public sealed class ThumbnailImportTests
         { Copied.Add(row.Title); return Task.FromResult(new ThumbnailCopyResult(10, "abc")); }
     }
 
+    private sealed class MemoryManifestStore : IThumbnailBatchManifestStore
+    {
+        private readonly Dictionary<string, ThumbnailBatchManifest> _items = [];
+        public Task<string> SaveAsync(ThumbnailBatchManifest manifest, CancellationToken ct)
+        {
+            var path = $"image-jobs/batches/{manifest.BatchId}/manifest.json";
+            _items.Add(path, manifest);
+            return Task.FromResult(path);
+        }
+        public Task<ThumbnailBatchManifest> ReadAsync(string path, CancellationToken ct) =>
+            Task.FromResult(_items[path]);
+    }
+
     private sealed class MetadataHandler : HttpMessageHandler
     {
+        public int RequestCount { get; private set; }
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            Task.FromResult(Response(request));
+
+        private HttpResponseMessage Response(HttpRequestMessage request)
+        {
+            RequestCount++;
+            return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(JsonSerializer.Serialize(new
                 {
@@ -220,6 +343,28 @@ public sealed class ThumbnailImportTests
                             })
                     }
                 }))
-            });
+            };
+        }
+    }
+
+    private sealed class MemoryInfoSnapshotStore : IImageInfoSnapshotStore
+    {
+        public int SavedCount { get; private set; }
+        public Task<string> SaveAsync(ImageInfoSnapshot snapshot, CancellationToken ct)
+        {
+            SavedCount++;
+            return Task.FromResult($"image-info/{SavedCount}.json");
+        }
+    }
+
+    private sealed class FakeInfoStore : IImageInfoStore
+    {
+        public Task<IReadOnlyDictionary<string, StoredImageInfo>> EnsureAsync(
+            IReadOnlyList<ImageCandidate> candidates, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyDictionary<string, StoredImageInfo>>(candidates.ToDictionary(
+                x => x.FileTitle,
+                x => new StoredImageInfo(x.FileTitle, "commonswiki", "complete", "raw.json",
+                    DateTimeOffset.UtcNow, null, null, 100, "CC BY", "https://example.org/license",
+                    "Alex", null), StringComparer.Ordinal));
     }
 }

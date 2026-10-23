@@ -1,7 +1,7 @@
 @page "/images"
 @using Creational.Dataflow.Images
 @inject ImageCatalog Catalog
-@inject WikimediaImageInfo Metadata
+@inject IImageInfoStore Metadata
 @inject ThumbnailImportService ThumbnailImports
 @inject NavigationManager Navigation
 
@@ -197,7 +197,8 @@
             await InvokeAsync(StateHasChanged);
             try
             {
-                _metadata = await Metadata.ResolveAsync(_page.Items.Select(x => x.FileTitle).ToArray(), CancellationToken.None);
+                var info = await Metadata.EnsureAsync(_page.Items, CancellationToken.None);
+                _metadata = info.ToDictionary(x => x.Key, x => x.Value.ToDisplay(330), StringComparer.Ordinal);
             }
             catch (Exception error) { _metadataError = error.Message; }
         }
@@ -210,14 +211,14 @@
 
     private async Task ImportVisibleAsync()
     {
-        if (_page is null || _importing) return;
+        if (_page is null || _selection is null || _importing) return;
         _importing = true;
         _error = null;
         try
         {
-            var id = await ThumbnailImports.CreateJobAsync(
-                _page.Items.Select(x => x.FileTitle).ToArray(), CancellationToken.None);
-            Navigation.NavigateTo($"/image-jobs/{id}");
+            var id = await ThumbnailImports.CreateBatchAsync(_selection,
+                (_pageNumber - 1) * PageSize, _page.Items.Count, CancellationToken.None);
+            Navigation.NavigateTo($"/image-batches/{id}");
         }
         catch (Exception error) { _error = error.Message; }
         finally { _importing = false; }

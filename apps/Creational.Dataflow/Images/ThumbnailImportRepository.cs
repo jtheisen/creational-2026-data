@@ -19,9 +19,14 @@ public interface IThumbnailImportRepository
     Task<IReadOnlyList<ThumbnailImportBatch>> ListBatchesAsync(int limit, CancellationToken ct);
     Task<IReadOnlyList<ThumbnailImportBatch>> ListActiveBatchesAsync(CancellationToken ct);
     Task SaveBatchAsync(ThumbnailImportBatch batch, CancellationToken ct);
+    Task<ThumbnailBatchItem?> GetBatchItemAsync(string batchId, int offset, CancellationToken ct);
+    Task<IReadOnlyList<ThumbnailBatchItem>> ListBatchItemsAsync(string batchId, CancellationToken ct);
+    Task SaveBatchItemAsync(ThumbnailBatchItem item, CancellationToken ct);
     Task<ThumbnailRendition?> GetRenditionAsync(string title, int width, CancellationToken ct);
     Task SaveRenditionAsync(ThumbnailRendition rendition, CancellationToken ct);
     Task EnsureAssetAsync(string title, CancellationToken ct);
+    Task<StoredImageInfo?> GetImageInfoAsync(string title, CancellationToken ct);
+    Task SaveImageInfoAsync(StoredImageInfo info, CancellationToken ct);
 }
 
 public sealed class ThumbnailImportRepository(TableClient table) : IThumbnailImportRepository
@@ -30,6 +35,7 @@ public sealed class ThumbnailImportRepository(TableClient table) : IThumbnailImp
     private const string Batches = "__thumbnail_batches";
     private const string Renditions = "__thumbnail_renditions";
     private const string Assets = "__thumbnail_assets";
+    private const string BatchItems = "__thumbnail_batch_items";
 
     public async Task AddJobAsync(ThumbnailImportJob job, CancellationToken ct) =>
         await table.AddEntityAsync(JobEntity(job), ct);
@@ -117,6 +123,39 @@ public sealed class ThumbnailImportRepository(TableClient table) : IThumbnailImp
     public async Task SaveBatchAsync(ThumbnailImportBatch batch, CancellationToken ct) =>
         await table.UpsertEntityAsync(BatchEntity(batch), TableUpdateMode.Replace, ct);
 
+    public async Task<ThumbnailBatchItem?> GetBatchItemAsync(string batchId, int offset, CancellationToken ct)
+    {
+        var key = $"{batchId}-{offset:D8}";
+        var response = await table.GetEntityIfExistsAsync<TableEntity>(BatchItems, key, cancellationToken: ct);
+        return response.HasValue ? ReadBatchItem(response.Value!) : null;
+    }
+
+    public async Task<IReadOnlyList<ThumbnailBatchItem>> ListBatchItemsAsync(string batchId, CancellationToken ct)
+    {
+        var rows = new List<ThumbnailBatchItem>();
+        var id = batchId.Replace("'", "''", StringComparison.Ordinal);
+        await foreach (var row in table.QueryAsync<TableEntity>(
+            filter: $"PartitionKey eq '__thumbnail_batch_items' and RowKey ge '{id}-' and RowKey lt '{id}.'",
+            cancellationToken: ct)) rows.Add(ReadBatchItem(row));
+        return rows.OrderBy(x => x.Offset).ToArray();
+    }
+
+    public async Task SaveBatchItemAsync(ThumbnailBatchItem item, CancellationToken ct)
+    {
+        var row = new TableEntity(BatchItems, item.RowKey)
+        {
+            ["BatchId"] = item.BatchId, ["Offset"] = item.Offset,
+            ["Title"] = item.Title, ["Status"] = item.Status
+        };
+        if (item.Bytes is { } bytes) row["Bytes"] = bytes;
+        if (item.Error is { } error) row["Error"] = error[..Math.Min(1024, error.Length)];
+        await table.UpsertEntityAsync(row, TableUpdateMode.Replace, ct);
+    }
+
+    private static ThumbnailBatchItem ReadBatchItem(TableEntity row) => new(
+        row.GetString("BatchId")!, row.GetInt32("Offset")!.Value,
+        row.GetString("Title")!, row.GetString("Status")!, row.GetInt64("Bytes"), row.GetString("Error"));
+
     public async Task<ThumbnailRendition?> GetRenditionAsync(string title, int width, CancellationToken ct)
     {
         var identity = ThumbnailIdentity.For(title, width);
@@ -156,6 +195,45 @@ public sealed class ThumbnailImportRepository(TableClient table) : IThumbnailImp
         }
         catch (RequestFailedException e) when (e.Status == 409) { }
     }
+
+    public async Task<StoredImageInfo?> GetImageInfoAsync(string title, CancellationToken ct)
+    {
+        var key = ThumbnailIdentity.For(title, 250).RowKey[..64];
+        var response = await table.GetEntityIfExistsAsync<TableEntity>(Assets, key, cancellationToken: ct);
+        if (!response.HasValue || string.IsNullOrEmpty(response.Value!.GetString("MetadataStatus"))) return null;
+        var row = response.Value!;
+        return new(title, row.GetString("SourceWiki")!, row.GetString("MetadataStatus")!,
+            row.GetString("MetadataRawPath")!, row.GetDateTimeOffset("MetadataFetchedAt")!.Value,
+            EmptyToNull(row.GetString("SourceSha1")),
+            row.GetDateTimeOffset("SourceUploadedAt") is { } uploaded && uploaded != DateTimeOffset.UnixEpoch
+                ? uploaded : null,
+            row.GetInt64("OriginalBytes") is { } bytes && bytes >= 0 ? bytes : null,
+            EmptyToNull(row.GetString("License")), EmptyToNull(row.GetString("LicenseUrl")),
+            EmptyToNull(row.GetString("Attribution")), EmptyToNull(row.GetString("MetadataError")),
+            row.GetBoolean("MetadataStale") ?? false, EmptyToNull(row.GetString("ResolvedTitle")));
+    }
+
+    public async Task SaveImageInfoAsync(StoredImageInfo info, CancellationToken ct)
+    {
+        await EnsureAssetAsync(info.Title, ct);
+        var key = ThumbnailIdentity.For(info.Title, 250).RowKey[..64];
+        var row = new TableEntity(Assets, key)
+        {
+            ["MetadataStatus"] = info.Status, ["SourceWiki"] = info.SourceWiki,
+            ["MetadataRawPath"] = info.RawPath, ["MetadataFetchedAt"] = info.FetchedAt,
+            ["MetadataStale"] = info.Stale,
+            ["ResolvedTitle"] = info.ResolvedTitle ?? info.Title,
+            ["SourceSha1"] = info.Sha1 ?? "",
+            ["SourceUploadedAt"] = info.UploadedAt ?? DateTimeOffset.UnixEpoch,
+            ["OriginalBytes"] = info.OriginalBytes ?? -1,
+            ["License"] = info.License ?? "", ["LicenseUrl"] = info.LicenseUrl ?? "",
+            ["Attribution"] = info.Attribution ?? "", ["MetadataError"] = info.Error ?? ""
+        };
+        if (info.Error is { Length: > 1024 } error) row["MetadataError"] = error[..1024];
+        await table.UpsertEntityAsync(row, TableUpdateMode.Merge, ct);
+    }
+
+    private static string? EmptyToNull(string? value) => string.IsNullOrEmpty(value) ? null : value;
 
     private static TableEntity JobEntity(ThumbnailImportJob job)
     {
@@ -201,6 +279,11 @@ public sealed class ThumbnailImportRepository(TableClient table) : IThumbnailImp
         ["Status"] = batch.Status,
         ["CreatedAt"] = batch.CreatedAt,
         ["FailedJobs"] = batch.FailedJobs,
+        ["Width"] = batch.Width,
+        ["CopiedImages"] = batch.CopiedImages,
+        ["SkippedImages"] = batch.SkippedImages,
+        ["FailedImages"] = batch.FailedImages,
+        ["ManifestPath"] = batch.ManifestPath ?? "",
         ["Error"] = batch.Error ?? ""
     };
 
@@ -210,5 +293,12 @@ public sealed class ThumbnailImportRepository(TableClient table) : IThumbnailImp
         row.GetInt32("StartOffset")!.Value, row.GetInt32("RequestedCount")!.Value,
         row.GetInt32("NextOffset")!.Value, row.GetString("Status")!,
         row.GetDateTimeOffset("CreatedAt")!.Value, row.GetInt32("FailedJobs") ?? 0,
-        string.IsNullOrEmpty(row.GetString("Error")) ? null : row.GetString("Error"));
+        string.IsNullOrEmpty(row.GetString("Error")) ? null : row.GetString("Error"))
+    {
+        ManifestPath = string.IsNullOrEmpty(row.GetString("ManifestPath")) ? null : row.GetString("ManifestPath"),
+        Width = row.GetInt32("Width") ?? 250,
+        CopiedImages = row.GetInt32("CopiedImages") ?? 0,
+        SkippedImages = row.GetInt32("SkippedImages") ?? 0,
+        FailedImages = row.GetInt32("FailedImages") ?? 0
+    };
 }

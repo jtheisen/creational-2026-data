@@ -66,11 +66,22 @@ if (args.Length == 2 && args[0] == "--import-thumbnail-once")
 if (args.Length == 4 && args[0] == "--schedule-image-batch")
 {
     var selection = ImageSelection.Parse(args[1]);
-    var batch = ThumbnailImportBatch.Create(selection, int.Parse(args[2]), int.Parse(args[3]));
     var tableService = new TableServiceClient(new Uri(accountUrl.Replace(".blob.", ".table.", StringComparison.OrdinalIgnoreCase)), credential);
-    await new ThumbnailImportRepository(tableService.GetTableClient("CollectionTargets"))
-        .AddBatchAsync(batch, CancellationToken.None);
-    Console.WriteLine(JsonSerializer.Serialize(batch));
+    var table = tableService.GetTableClient("CollectionTargets");
+    var shards = await new SourceManifestLoader(blobStore).LoadAsync(CancellationToken.None);
+    var catalog = new ImageCatalog(new TableTargetRepository(table),
+        new AzureOutputManifestReader(blobStore), blobStore, shards);
+    var userAgent = Environment.GetEnvironmentVariable("Copies__UserAgent") ??
+        "CreationalDataflow/1.0 (https://github.com/jtheisen/creational-2026-data)";
+    var pacer = new WikimediaRequestPacer();
+    using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+    http.DefaultRequestHeaders.UserAgent.ParseAdd(userAgent);
+    var service = new ThumbnailImportService(new ThumbnailImportRepository(table),
+        new ThumbnailBlobCopier(http, blobService, pacer), new WikimediaImageInfo(http, userAgent, pacer),
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<ThumbnailImportService>.Instance,
+        catalog, new AzureThumbnailBatchManifestStore(blobService));
+    var id = await service.CreateBatchAsync(selection, int.Parse(args[2]), int.Parse(args[3]), CancellationToken.None);
+    Console.WriteLine(JsonSerializer.Serialize(await service.GetBatchAsync(id, CancellationToken.None)));
     return;
 }
 
@@ -107,6 +118,9 @@ builder.Services.AddSingleton(sp => new WikimediaImageInfo(new HttpClient(), cop
     "CreationalDataflow/1.0 (https://github.com/jtheisen/creational-2026-data)",
     sp.GetRequiredService<WikimediaRequestPacer>()));
 builder.Services.AddSingleton<IThumbnailImportRepository, ThumbnailImportRepository>();
+builder.Services.AddSingleton<IThumbnailBatchManifestStore, AzureThumbnailBatchManifestStore>();
+builder.Services.AddSingleton<IImageInfoSnapshotStore, AzureImageInfoSnapshotStore>();
+builder.Services.AddSingleton<IImageInfoStore, ImageInfoStore>();
 builder.Services.AddSingleton<IThumbnailBlobCopier>(sp =>
 {
     var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
@@ -119,7 +133,9 @@ builder.Services.AddSingleton(sp => new ThumbnailImportService(
     sp.GetRequiredService<IThumbnailBlobCopier>(),
     sp.GetRequiredService<WikimediaImageInfo>(),
     sp.GetRequiredService<ILogger<ThumbnailImportService>>(),
-    sp.GetRequiredService<IImageCatalog>()));
+    sp.GetRequiredService<IImageCatalog>(),
+    sp.GetRequiredService<IThumbnailBatchManifestStore>(),
+    sp.GetRequiredService<IImageInfoStore>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ThumbnailImportService>());
 builder.Services.AddSingleton<IStreamingCopier>(sp =>
 {

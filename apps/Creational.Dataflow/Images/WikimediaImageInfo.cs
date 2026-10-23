@@ -9,10 +9,119 @@ public sealed record ImageMetadata(string FileTitle, string? ThumbnailUrl, strin
     string? OriginalUrl, long? OriginalBytes, string? License, string? LicenseUrl,
     string? Attribution, bool NeedsRightsReview, string? Error);
 
+public sealed record ImageInfoSnapshot(string RequestedTitle, string SourceWiki, string RawJson,
+    ImageMetadata Metadata, string? Sha1, DateTimeOffset? UploadedAt, string Status);
+
 public sealed class WikimediaImageInfo(HttpClient http, string? userAgent, WikimediaRequestPacer? pacer = null)
 {
     private readonly ConcurrentDictionary<string, (ImageMetadata Data, DateTimeOffset Until)> _cache =
         new(StringComparer.Ordinal);
+
+    public async Task<IReadOnlyDictionary<string, ImageInfoSnapshot>> FetchSnapshotsAsync(
+        IReadOnlyList<string> titles, string sourceWiki, CancellationToken ct)
+    {
+        var host = sourceWiki switch
+        {
+            "enwiki" => "en.wikipedia.org",
+            "commonswiki" => "commons.wikimedia.org",
+            _ => throw new ArgumentException("Unsupported source wiki.", nameof(sourceWiki))
+        };
+        if (string.IsNullOrWhiteSpace(userAgent))
+            throw new InvalidOperationException("Set Copies:UserAgent for Wikimedia metadata requests.");
+        var result = new Dictionary<string, ImageInfoSnapshot>(StringComparer.Ordinal);
+        foreach (var batch in titles.Distinct(StringComparer.Ordinal).Chunk(10))
+        {
+            var url = $"https://{host}/w/api.php?action=query&format=json&prop=imageinfo&redirects=1" +
+                "&iiprop=canonicaltitle%7Ctimestamp%7Csha1%7Csize%7Cmime%7Cmediatype%7Cextmetadata" +
+                "&iilimit=1&iiextmetadatalanguage=en" +
+                (sourceWiki == "enwiki" ? "&iilocalonly=1" : "") +
+                "&titles=" + Uri.EscapeDataString(string.Join('|', batch));
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            request.Headers.UserAgent.ParseAdd(userAgent);
+            if (pacer is not null) await pacer.WaitAsync(ct);
+            using var response = await http.SendAsync(request, ct);
+            if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
+                throw new WikimediaThrottledException(response.Headers.RetryAfter?.Delta ?? TimeSpan.FromMinutes(1));
+            response.EnsureSuccessStatusCode();
+            await using var stream = await response.Content.ReadAsStreamAsync(ct);
+            using var json = await JsonDocument.ParseAsync(stream, cancellationToken: ct);
+            var pages = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (json.RootElement.TryGetProperty("query", out var query) &&
+                query.TryGetProperty("pages", out var allPages))
+            {
+                foreach (var page in allPages.EnumerateObject())
+                    if (page.Value.TryGetProperty("title", out var title))
+                        pages[Normalize(title.GetString()!)] = page.Value;
+                if (query.TryGetProperty("redirects", out var redirects))
+                    foreach (var redirect in redirects.EnumerateArray())
+                        aliases[Normalize(redirect.GetProperty("from").GetString()!)] =
+                            Normalize(redirect.GetProperty("to").GetString()!);
+            }
+            foreach (var title in batch)
+            {
+                var key = Normalize(title);
+                for (var hop = 0; hop < 8 && aliases.TryGetValue(key, out var target); hop++) key = target;
+                pages.TryGetValue(key, out var page);
+                var raw = page.ValueKind == JsonValueKind.Undefined ? "{}" : page.GetRawText();
+                JsonElement infos = default;
+                var found = page.ValueKind == JsonValueKind.Object &&
+                    page.TryGetProperty("imageinfo", out infos) && infos.GetArrayLength() > 0;
+                if (!found)
+                {
+                    result[title] = new(title, sourceWiki, raw,
+                        new ImageMetadata(title, null, null, null, null, null, null, null, true,
+                            "File metadata was not found on its recorded source wiki."), null, null, "missing");
+                    continue;
+                }
+                var info = infos[0];
+                var mediaType = Value(info, "mediatype");
+                if (mediaType is not null && mediaType is not ("BITMAP" or "DRAWING"))
+                {
+                    result[title] = new(title, sourceWiki, raw,
+                        new ImageMetadata(page.GetProperty("title").GetString()!, null, null, null,
+                            info.TryGetProperty("size", out var mediaSize) && mediaSize.TryGetInt64(out var mediaBytes)
+                                ? mediaBytes : null,
+                            null, null, null, true, $"Unsupported Wikimedia media type: {mediaType}."),
+                        Value(info, "sha1"),
+                        DateTimeOffset.TryParse(Value(info, "timestamp"), out var mediaUploaded) ? mediaUploaded : null,
+                        "unsupported");
+                    continue;
+                }
+                var ext = info.TryGetProperty("extmetadata", out var metadata) ? metadata : default;
+                var license = Plain(Ext(ext, "LicenseShortName"));
+                var licenseUrl = SafeHttps(Ext(ext, "LicenseUrl"));
+                var attribution = Plain(Ext(ext, "Attribution")) ?? Plain(Ext(ext, "Artist")) ??
+                    Plain(Ext(ext, "Credit"));
+                var actualTitle = page.GetProperty("title").GetString()!;
+                var description = $"https://{host}/wiki/{Uri.EscapeDataString(actualTitle.Replace(' ', '_'))}";
+                var display = new ImageMetadata(actualTitle, ThumbnailRedirect(sourceWiki, actualTitle, 330),
+                    description, null,
+                    info.TryGetProperty("size", out var size) && size.TryGetInt64(out var bytes) ? bytes : null,
+                    license, licenseUrl, attribution,
+                    string.IsNullOrWhiteSpace(license) || string.IsNullOrWhiteSpace(licenseUrl), null);
+                result[title] = new(title, sourceWiki, raw, display, Value(info, "sha1"),
+                    DateTimeOffset.TryParse(Value(info, "timestamp"), out var uploaded) ? uploaded : null,
+                    "complete");
+            }
+        }
+        return result;
+    }
+
+    public static string ThumbnailRedirect(string sourceWiki, string title, int width)
+    {
+        var host = sourceWiki switch
+        {
+            "enwiki" => "en.wikipedia.org",
+            "commonswiki" => "commons.wikimedia.org",
+            _ => throw new ArgumentException("Unsupported source wiki.", nameof(sourceWiki))
+        };
+        if (width is < 1 or > 2048) throw new ArgumentOutOfRangeException(nameof(width));
+        if (!title.StartsWith("File:", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Expected a File title.", nameof(title));
+        return $"https://{host}/w/index.php?title=Special%3ARedirect%2Ffile%2F" +
+            Uri.EscapeDataString(title[5..].Replace(' ', '_')) + $"&width={width}";
+    }
 
     public async Task<IReadOnlyDictionary<string, ImageMetadata>> ResolveAsync(
         IReadOnlyList<string> titles, CancellationToken ct) => await ResolveAsync(titles, 320, ct);

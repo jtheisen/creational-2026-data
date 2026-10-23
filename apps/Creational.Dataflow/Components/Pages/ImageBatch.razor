@@ -18,8 +18,15 @@
     {
         <MudPaper Class="pa-4">
             <MudStack Spacing="1">
-                <MudText>Selection: @SelectionLabel · images @(_batch.StartOffset + 1)–@_batch.EndOffset · width 250px</MudText>
-                <MudText>Status: @_batch.Status · @_finished.ToString("N0") of @_batch.RequestedCount.ToString("N0") finished · @_batch.FailedJobs failed child jobs</MudText>
+                <MudText>Selection: @SelectionLabel · images @(_batch.StartOffset + 1)–@_batch.EndOffset · width @_batch.Width px</MudText>
+                @if (_batch.ManifestPath is not null)
+                {
+                    <MudText>Status: @_batch.Status · @_finished.ToString("N0") of @_batch.RequestedCount.ToString("N0") finished · @_batch.CopiedImages copied · @_batch.SkippedImages already present · @_batch.FailedImages failed</MudText>
+                }
+                else
+                {
+                    <MudText>Status: @_batch.Status · @_finished.ToString("N0") of @_batch.RequestedCount.ToString("N0") finished · @_batch.FailedJobs failed child jobs</MudText>
+                }
                 <MudProgressLinear Color="Color.Primary" Value="@Progress" />
                 @if (_batch.Error is not null)
                 {
@@ -27,23 +34,48 @@
                 }
             </MudStack>
         </MudPaper>
-        <MudText Typo="Typo.h6">Child jobs</MudText>
-        @if (_jobs.Count == 0)
+        @if (_batch.ManifestPath is not null)
         {
-            <MudText Color="Color.Secondary">The first child job will appear when scheduling starts.</MudText>
+            <MudText Typo="Typo.h6">Images</MudText>
+            @if (_items.Count == 0)
+            {
+                <MudText Color="Color.Secondary">Image outcomes will appear as the import progresses.</MudText>
+            }
+            else
+            {
+                <MudTable Items="_items" Dense="true" Hover="true" RowsPerPage="20">
+                    <HeaderContent><MudTh>Position</MudTh><MudTh>File</MudTh><MudTh>Outcome</MudTh><MudTh>Bytes copied</MudTh><MudTh>Details</MudTh></HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Position">@(context.Offset + 1)</MudTd>
+                        <MudTd DataLabel="File">@context.Title</MudTd>
+                        <MudTd DataLabel="Outcome">@context.Status</MudTd>
+                        <MudTd DataLabel="Bytes copied">@context.Bytes?.ToString("N0")</MudTd>
+                        <MudTd DataLabel="Details">@context.Error</MudTd>
+                    </RowTemplate>
+                    <PagerContent><MudTablePager /></PagerContent>
+                </MudTable>
+            }
         }
         else
         {
-            <MudTable Items="_jobs" Dense="true" Hover="true" RowsPerPage="10">
-                <HeaderContent><MudTh>Range</MudTh><MudTh>Images</MudTh><MudTh>Status</MudTh><MudTh>Created</MudTh></HeaderContent>
-                <RowTemplate>
-                    <MudTd DataLabel="Range"><a href="@($"/image-jobs/{context.Id}")">@((context.StartOffset ?? 0) + 1)–@((context.StartOffset ?? 0) + context.Titles.Length)</a></MudTd>
-                    <MudTd DataLabel="Images">@context.Titles.Length</MudTd>
-                    <MudTd DataLabel="Status">@context.Status</MudTd>
-                    <MudTd DataLabel="Created">@context.CreatedAt.ToString("yyyy-MM-dd HH:mm 'UTC'")</MudTd>
-                </RowTemplate>
-                <PagerContent><MudTablePager /></PagerContent>
-            </MudTable>
+            <MudText Typo="Typo.h6">Child jobs</MudText>
+            @if (_jobs.Count == 0)
+            {
+                <MudText Color="Color.Secondary">The first child job will appear when scheduling starts.</MudText>
+            }
+            else
+            {
+                <MudTable Items="_jobs" Dense="true" Hover="true" RowsPerPage="10">
+                    <HeaderContent><MudTh>Range</MudTh><MudTh>Images</MudTh><MudTh>Status</MudTh><MudTh>Created</MudTh></HeaderContent>
+                    <RowTemplate>
+                        <MudTd DataLabel="Range"><a href="@($"/image-jobs/{context.Id}")">@((context.StartOffset ?? 0) + 1)–@((context.StartOffset ?? 0) + context.Titles.Length)</a></MudTd>
+                        <MudTd DataLabel="Images">@context.Titles.Length</MudTd>
+                        <MudTd DataLabel="Status">@context.Status</MudTd>
+                        <MudTd DataLabel="Created">@context.CreatedAt.ToString("yyyy-MM-dd HH:mm 'UTC'")</MudTd>
+                    </RowTemplate>
+                    <PagerContent><MudTablePager /></PagerContent>
+                </MudTable>
+            }
         }
     }
 </MudStack>
@@ -52,6 +84,7 @@
     [Parameter] public string Id { get; set; } = "";
     private ThumbnailImportBatch? _batch;
     private IReadOnlyList<Creational.Dataflow.Images.ThumbnailImportJob> _jobs = [];
+    private IReadOnlyList<ThumbnailBatchItem> _items = [];
     private string? _error;
     private CancellationTokenSource? _stop;
     private int _finished => _batch is null ? 0 : _batch.NextOffset - _batch.StartOffset;
@@ -87,7 +120,10 @@
         {
             _batch = await Imports.GetBatchAsync(Id, ct);
             if (_batch is null) { _error = "Image batch was not found."; return; }
-            _jobs = await Imports.ListBatchJobsAsync(Id, ct);
+            if (_batch.ManifestPath is null)
+                _jobs = await Imports.ListBatchJobsAsync(Id, ct);
+            else
+                _items = await Imports.ListBatchItemsAsync(Id, ct);
             _error = null;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }

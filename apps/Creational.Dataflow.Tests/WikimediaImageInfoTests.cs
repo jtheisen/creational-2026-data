@@ -72,6 +72,73 @@ public class WikimediaImageInfoTests
         Assert.Contains("iiurlwidth=320", widths[1]);
     }
 
+    [Fact]
+    public async Task FetchSnapshotsBatchesTitlesWithoutRequestingImageUrls()
+    {
+        var requests = new List<string>();
+        var handler = new StubHandler(request =>
+        {
+            requests.Add(request.RequestUri!.Query);
+            return """
+                {"query":{"pages":{"1":{"title":"File:A.jpg","imageinfo":[{"size":100,"sha1":"abc","timestamp":"2026-10-01T00:00:00Z","extmetadata":{"LicenseShortName":{"value":"CC BY 4.0"},"LicenseUrl":{"value":"https://creativecommons.org/licenses/by/4.0/"},"Artist":{"value":"<b>Alex</b>"},"UsageTerms":{"value":"Credit Alex"}}}]},"2":{"title":"File:B.jpg","imageinfo":[{"size":200,"extmetadata":{}}]}}}}
+                """;
+        });
+        using var http = new HttpClient(handler);
+        var lookup = new WikimediaImageInfo(http, "CreationalDataflow/1.0 (contact: test@example.org)");
+
+        var snapshots = await lookup.FetchSnapshotsAsync(["File:A.jpg", "File:B.jpg"], "commonswiki", CancellationToken.None);
+
+        Assert.Single(requests);
+        Assert.Contains("titles=File%3AA.jpg%7CFile%3AB.jpg", requests[0]);
+        Assert.DoesNotContain("iiprop=url", requests[0]);
+        Assert.DoesNotContain("iiurlwidth", requests[0]);
+        Assert.Contains("UsageTerms", snapshots["File:A.jpg"].RawJson);
+        Assert.Equal("CC BY 4.0", snapshots["File:A.jpg"].Metadata.License);
+        Assert.Equal("Alex", snapshots["File:A.jpg"].Metadata.Attribution);
+    }
+
+    [Fact]
+    public void ThumbnailRedirectUsesSourceWikiAndRequestedWidth()
+    {
+        Assert.Equal(
+            "https://commons.wikimedia.org/w/index.php?title=Special%3ARedirect%2Ffile%2FBird.jpg&width=250",
+            WikimediaImageInfo.ThumbnailRedirect("commonswiki", "File:Bird.jpg", 250));
+        Assert.Equal(
+            "https://en.wikipedia.org/w/index.php?title=Special%3ARedirect%2Ffile%2FBird.jpg&width=330",
+            WikimediaImageInfo.ThumbnailRedirect("enwiki", "File:Bird.jpg", 330));
+    }
+
+    [Fact]
+    public async Task FetchSnapshotFollowsFileTitleRedirect()
+    {
+        var handler = new StubHandler(_ => """
+            {"query":{"redirects":[{"from":"File:Old.jpg","to":"File:New.jpg"}],
+            "pages":{"1":{"title":"File:New.jpg","imageinfo":[{"size":42}]}}}}
+            """);
+        using var http = new HttpClient(handler);
+        var lookup = new WikimediaImageInfo(http, "CreationalDataflow/1.0 (contact: test@example.org)");
+
+        var snapshots = await lookup.FetchSnapshotsAsync(["File:Old.jpg"], "commonswiki", CancellationToken.None);
+
+        Assert.Equal("complete", snapshots["File:Old.jpg"].Status);
+        Assert.Equal("File:New.jpg", snapshots["File:Old.jpg"].Metadata.FileTitle);
+    }
+
+    [Fact]
+    public async Task NonImageMediaIsNotOfferedAsAThumbnail()
+    {
+        var handler = new StubHandler(_ => """
+            {"query":{"pages":{"1":{"title":"File:Birdsong.ogg","imageinfo":[{"size":42,"mediatype":"AUDIO"}]}}}}
+            """);
+        using var http = new HttpClient(handler);
+        var lookup = new WikimediaImageInfo(http, "CreationalDataflow/1.0 (contact: test@example.org)");
+
+        var snapshots = await lookup.FetchSnapshotsAsync(["File:Birdsong.ogg"], "commonswiki", CancellationToken.None);
+
+        Assert.Equal("unsupported", snapshots["File:Birdsong.ogg"].Status);
+        Assert.Null(snapshots["File:Birdsong.ogg"].Metadata.ThumbnailUrl);
+    }
+
     private sealed class StubHandler(Func<HttpRequestMessage, string> response) : HttpMessageHandler
     {
         public int RequestCount { get; private set; }

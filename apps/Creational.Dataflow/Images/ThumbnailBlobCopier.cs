@@ -51,7 +51,7 @@ public sealed class ThumbnailBlobCopier(HttpClient http, BlobServiceClient servi
     public async Task<ThumbnailCopyResult> CopyAsync(string sourceUrl, ThumbnailRendition rendition, CancellationToken ct)
     {
         if (!Uri.TryCreate(sourceUrl, UriKind.Absolute, out var url) || !Allowed(url))
-            throw new InvalidOperationException("The imageinfo response did not contain a Wikimedia thumbnail URL.");
+            throw new InvalidOperationException("The image source is not an allowed Wikimedia URL.");
 
         using var response = await GetAllowedAsync(url, ct);
         if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
@@ -121,5 +121,7 @@ public sealed class ThumbnailBlobCopier(HttpClient http, BlobServiceClient servi
 
     private static bool Allowed(Uri uri) => uri.Scheme == Uri.UriSchemeHttps &&
         (uri.Host.Equals("upload.wikimedia.org", StringComparison.OrdinalIgnoreCase) ||
-         uri.Host.Equals("thumb.wikimedia.org", StringComparison.OrdinalIgnoreCase));
+         uri.Host.Equals("thumb.wikimedia.org", StringComparison.OrdinalIgnoreCase) ||
+         uri.Host.Equals("commons.wikimedia.org", StringComparison.OrdinalIgnoreCase) ||
+         uri.Host.Equals("en.wikipedia.org", StringComparison.OrdinalIgnoreCase));
 }

@@ -12,12 +12,12 @@ start a bounded 250px thumbnail import for its current page; see
 ## First thumbnail import
 
 The image preview's import button snapshots at most 24 visible file titles
-into a job row in `CollectionTargets`. The hosted thumbnail importer processes
-one file at a time and resumes pending or running jobs after an App Service
-restart. Asset rows are neutral (`unreviewed`); width-specific rendition rows
-record source URL, Blob path, bytes, SHA-256, and per-file errors. These rows
-are separate from the collection dependency graph. The job page shows each
-file's state and the completed byte total. The shared Wikimedia request pacer
+into a batch. The hosted thumbnail importer processes one file at a time and
+resumes pending or running batches after an App Service restart. Asset rows are
+neutral (`unreviewed`) and hold persisted imageinfo; width-specific rendition
+rows record Blob path, bytes, SHA-256, and per-file errors. These rows
+are separate from the collection dependency graph. The batch page shows each
+file's outcome and the copied byte total. The shared Wikimedia request pacer
 starts at one request per second and backs off on 429/503.
 
 The Blob path is `thumbnails/250px/<hash-prefix>/<title-hash>/<filename>` in
@@ -30,11 +30,14 @@ work.
 
 The image preview also offers a bounded batch action, initially starting at its
 current page but accepting an exact starting image and a count of 1–1,000
-(default 100). A batch row persists the selection,
-offset, and cursor; the hosted importer generates deterministic child jobs of
-up to 24 images. The cursor advances only when a child job finishes, so the
-batch can resume after a process restart without duplicating jobs. `/image-jobs`
-lists batches and older standalone jobs; each batch links to its child jobs.
+(default 100). A batch row persists the selection, offset, and per-image
+cursor; an immutable Blob manifest freezes the exact titles and source wikis.
+The hosted importer resolves missing imageinfo in multi-title requests, then
+copies each image in a bounded window. It records each batch image outcome
+before advancing the cursor, so it resumes without recopying completed files.
+Existing child-job batches retain their original resume and history path.
+`/image-jobs` lists batches and older standalone jobs; new batches show a paged
+image outcome table.
 At the current one-request-per-second Wikimedia pace, a 1,000-image batch may
 take many minutes or hours. An entire large clade still needs successive
 non-overlapping ranges.

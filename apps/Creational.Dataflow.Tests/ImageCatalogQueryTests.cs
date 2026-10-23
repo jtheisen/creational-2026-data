@@ -45,6 +45,7 @@ public class ImageCatalogQueryTests
         Assert.Equal(1, page.MetadataResolvedCount);
         Assert.Equal(1, page.MetadataMissingCount);
         Assert.Equal(0, page.MetadataAmbiguousCount);
+        Assert.Equal("enwiki", page.Items[0].SourceWiki);
     }
 
     [Fact]
@@ -94,7 +95,7 @@ public class ImageCatalogQueryTests
         {
             using var db = new DuckDBConnection("Data Source=:memory:");
             db.Open();
-            Write(db, "resolved_images.parquet", $"SELECT * FROM (VALUES ('A.jpg',125,'enwiki-local'), ('B.jpg',{(secondBytes is null ? "NULL" : secondBytes.ToString())},'{secondStatus}')) t(canonical_key,original_bytes,status)");
+            Write(db, "resolved_images.parquet", $"SELECT * FROM (VALUES ('A.jpg',125,'enwiki-local','enwiki'), ('B.jpg',{(secondBytes is null ? "NULL" : secondBytes.ToString())},'{secondStatus}','commonswiki')) t(canonical_key,original_bytes,status,source_wiki)");
         }
 
         public void AddCaseVariant()

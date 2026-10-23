@@ -4,15 +4,16 @@ The `/images` page accepts an OTT ID or an English Wikipedia article URL. OTT
 selection includes the ID and all descendants in the full OTT 3.3 hierarchy,
 then uses the investigative exact-name correlation to find Wikipedia pages.
 The gallery shows distinct resolvable image files from taxobox fields, file
-links, and galleries. It counts unresolved markup separately. It fetches
-Wikimedia `imageinfo` thumbnail and license metadata only for the visible 24
+links, and galleries. It counts unresolved markup separately. It fetches and
+persists Wikimedia `imageinfo` license and descriptive metadata for the visible 24
 files. Once `resolved-image-metadata` completes, it also shows the selected
 branch's known original-byte total and counts of resolved, missing, and
 non-image media, and ambiguous filenames. The preview itself only links to
-Wikimedia; its page import button queues up to the 24 currently visible images
+Wikimedia; its page import button schedules the 24 currently visible images
 as 250px thumbnails. The batch control schedules 1–1,000 images (default 100)
-from an editable starting image, initially set to the current preview page. A persisted cursor creates child jobs
-of up to 24 images and resumes after a restart. The `/image-jobs` page lists
+from an editable starting image, initially set to the current preview page. An
+immutable Blob manifest and per-image cursor let the batch resume after a
+restart. The `/image-jobs` page lists
 past and current batches and individual jobs. See [collection import operations](COLLECTION_IMPORT_OPERATIONS.md#first-thumbnail-import)
 for job and Blob details.
 
@@ -50,7 +51,12 @@ publish a matching completion marker last. The long-term collection graph
 should make this a generated target when another OTT version is imported.
 
 The Wikimedia metadata client uses a descriptive User-Agent with the project
-repository URL as contact unless `Copies:UserAgent` is configured. It queries
-English Wikipedia first so a local file wins a same-name collision, then asks
-Commons for files not found there. Missing rights
-fields are flagged for review; badges do not certify import eligibility.
+repository URL as contact unless `Copies:UserAgent` is configured. The resolved
+image catalog selects an English Wikipedia local file before Commons and passes
+the source wiki to imageinfo. Missing rights fields are flagged for review;
+badges do not certify import eligibility. The full requested imageinfo page
+result is archived in Blob, and the existing per-image Table asset row holds
+the displayed fields and a pointer to that snapshot. The preview and importer
+reuse this persisted metadata. New thumbnail copies use Wikimedia's
+`Special:Redirect/file` URL for the requested standard width; they do not need
+another imageinfo request merely because the width changes.

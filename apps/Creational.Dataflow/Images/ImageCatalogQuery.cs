@@ -2,7 +2,8 @@ using DuckDB.NET.Data;
 
 namespace Creational.Dataflow.Images;
 
-public sealed record ImageCandidate(string FileTitle, string ArticleTitle, string SourceKind);
+public sealed record ImageCandidate(string FileTitle, string ArticleTitle, string SourceKind,
+    string? SourceWiki = null);
 
 public sealed record ImageCatalogPage(int PageCount, int CandidateCount, int UnresolvedCount,
     IReadOnlyList<ImageCandidate> Items)
@@ -68,18 +69,28 @@ public static class ImageCatalogQuery
             ) WHERE row_number=1
             """);
         var candidateCount = Scalar(db, "SELECT count(*) FROM candidate_files");
+        var metadata = Path.Combine(root, "resolved_images.parquet");
+        var sourceJoin = File.Exists(metadata)
+            ? $"""
+                LEFT JOIN read_parquet({Quote(metadata.Replace('\\', '/'))}) r
+                  ON upper(left(replace(substring(c.file_title,6),'_',' '),1)) ||
+                     substring(replace(substring(c.file_title,6),'_',' '),2)=r.canonical_key
+                """
+            : "";
+        var sourceColumn = File.Exists(metadata) ? "r.source_wiki" : "CAST(NULL AS VARCHAR)";
         using var command = db.CreateCommand();
         command.CommandText = $"""
-            SELECT file_title,article_title,source_kind
-            FROM candidate_files
-            ORDER BY lower(file_title),file_title
+            SELECT c.file_title,c.article_title,c.source_kind,{sourceColumn}
+            FROM candidate_files c
+            {sourceJoin}
+            ORDER BY lower(c.file_title),c.file_title
             LIMIT {limit} OFFSET {offset}
             """;
         using var reader = command.ExecuteReader();
         var items = new List<ImageCandidate>();
-        while (reader.Read()) items.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+        while (reader.Read()) items.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2),
+            reader.IsDBNull(3) ? null : reader.GetString(3)));
         var page = new ImageCatalogPage(pageCount, candidateCount, unresolved, items);
-        var metadata = Path.Combine(root, "resolved_images.parquet");
         if (!File.Exists(metadata)) return page;
         using var totals = db.CreateCommand();
         totals.CommandText = $"""
