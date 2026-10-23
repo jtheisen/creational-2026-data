@@ -102,6 +102,7 @@ builder.Services.AddSingleton<ImportCoordinator>();
 var app = builder.Build();
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.UseStaticFiles();
+app.MapStaticAssets();
 app.UseAntiforgery();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 app.Run();
