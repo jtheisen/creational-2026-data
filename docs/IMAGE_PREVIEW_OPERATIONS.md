@@ -17,6 +17,13 @@ restart. The `/image-jobs` page lists
 past and current batches and individual jobs. See [collection import operations](COLLECTION_IMPORT_OPERATIONS.md#first-thumbnail-import)
 for job and Blob details.
 
+The unified batch page shows every image from its saved manifest. Its All,
+In progress, Skipped, and Pending selector filters thumbnail work: Skipped
+means that a current thumbnail was reused, even if imageinfo was fetched.
+The separate imageinfo badge reports the persisted metadata state. In progress
+comes from the running app's memory and reappears when processing resumes after
+an app restart; the completed image outcomes and cursor remain persisted.
+
 On first use after an App Service process restart, the control plane downloads
 the compact OTT hierarchy, exact matches, and the 19 parsed article/image
 reference pairs into temporary local storage. It verifies each Blob's length

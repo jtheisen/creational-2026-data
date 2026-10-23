@@ -192,6 +192,28 @@ public sealed class ThumbnailImportTests
     }
 
     [Fact]
+    public async Task UnifiedBatchExposesMetadataActivityUntilItsWindowFinishes()
+    {
+        var repository = new MemoryRepository();
+        var info = new BlockingInfoStore();
+        using var http = new HttpClient(new MetadataHandler());
+        var service = new ThumbnailImportService(repository, new FakeCopier(),
+            new WikimediaImageInfo(http, "CreationalDataflow/1.0 (contact: test@example.org)"),
+            NullLogger<ThumbnailImportService>.Instance,
+            new FakeCatalog(["File:First.jpg", "File:Second.jpg"]), new MemoryManifestStore(), info);
+        var id = await service.CreateBatchAsync(ImageSelection.Parse("691846"), 0, 2, CancellationToken.None);
+
+        var run = service.ProcessPendingAsync(CancellationToken.None);
+        await info.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(new ThumbnailBatchActivity(id, ThumbnailBatchWorkStage.Metadata, 0, 2),
+            service.GetBatchActivity(id));
+
+        info.Release.SetResult();
+        await run;
+        Assert.Null(service.GetBatchActivity(id));
+    }
+
+    [Fact]
     public async Task BatchRestartAdvancesPastExistingChildWithoutDuplicatingIt()
     {
         var titles = Enumerable.Range(0, 25).Select(x => $"File:Image {x}.jpg").ToArray();
@@ -366,5 +388,19 @@ public sealed class ThumbnailImportTests
                 x => new StoredImageInfo(x.FileTitle, "commonswiki", "complete", "raw.json",
                     DateTimeOffset.UtcNow, null, null, 100, "CC BY", "https://example.org/license",
                     "Alex", null), StringComparer.Ordinal));
+    }
+
+    private sealed class BlockingInfoStore : IImageInfoStore
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<IReadOnlyDictionary<string, StoredImageInfo>> EnsureAsync(
+            IReadOnlyList<ImageCandidate> candidates, CancellationToken ct)
+        {
+            Started.SetResult();
+            await Release.Task.WaitAsync(ct);
+            return await new FakeInfoStore().EnsureAsync(candidates, ct);
+        }
     }
 }

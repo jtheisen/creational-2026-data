@@ -13,6 +13,13 @@ public sealed class ThumbnailImportService(
     IImageInfoStore? infoStore = null) : BackgroundService
 {
     private readonly SemaphoreSlim _wake = new(0, 1);
+    private ThumbnailBatchActivity? _activity;
+
+    public ThumbnailBatchActivity? GetBatchActivity(string batchId)
+    {
+        var activity = Volatile.Read(ref _activity);
+        return activity?.BatchId == batchId ? activity : null;
+    }
 
     public async Task<string> CreateJobAsync(IReadOnlyList<string> titles, CancellationToken ct)
     {
@@ -178,11 +185,20 @@ public sealed class ThumbnailImportService(
             batch = batch with { Status = "running", Error = null };
             await repository.SaveBatchAsync(batch, ct);
         }
+        try { await RunUnifiedBatchCoreAsync(batch, manifest, infoStore, ct); }
+        finally { Volatile.Write(ref _activity, null); }
+    }
+
+    private async Task RunUnifiedBatchCoreAsync(ThumbnailImportBatch batch,
+        ThumbnailBatchManifest manifest, IImageInfoStore infoStore, CancellationToken ct)
+    {
         while (batch.NextOffset < batch.EndOffset)
         {
             ct.ThrowIfCancellationRequested();
             var first = batch.NextOffset - batch.StartOffset;
             var window = manifest.Images.Skip(first).Take(30).ToArray();
+            Volatile.Write(ref _activity, new ThumbnailBatchActivity(batch.Id,
+                ThumbnailBatchWorkStage.Metadata, batch.NextOffset, window.Length));
             IReadOnlyDictionary<string, StoredImageInfo> metadata;
             try { metadata = await infoStore.EnsureAsync(window, ct); }
             catch (WikimediaThrottledException error)
@@ -195,6 +211,8 @@ public sealed class ThumbnailImportService(
             foreach (var candidate in window)
             {
                 var offset = batch.NextOffset;
+                Volatile.Write(ref _activity, new ThumbnailBatchActivity(batch.Id,
+                    ThumbnailBatchWorkStage.Copy, offset, 1));
                 var existing = await repository.GetBatchItemAsync(batch.Id, offset, ct);
                 ThumbnailBatchItem item;
                 if (existing is { Status: "copied" or "skipped" or "failed" })

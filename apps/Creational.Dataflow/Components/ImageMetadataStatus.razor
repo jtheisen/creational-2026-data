@@ -1,0 +1,33 @@
+@using Creational.Dataflow.Images
+@inject IThumbnailImportRepository Repository
+
+<MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@ChipColor">Metadata: @_status</MudChip>
+
+@code {
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    private string _status = "checking";
+    private Color ChipColor => _status switch
+    {
+        "ready" => Color.Success,
+        "stale" or "missing" or "unsupported" or "unavailable" => Color.Warning,
+        _ => Color.Default
+    };
+
+    protected override async Task OnParametersSetAsync()
+    {
+        try
+        {
+            var info = await Repository.GetImageInfoAsync(Title, CancellationToken.None);
+            _status = info switch
+            {
+                null => "not fetched",
+                { Stale: true } => "stale",
+                { Status: "complete" } => "ready",
+                { Status: "missing" } => "missing",
+                { Status: "unsupported" } => "unsupported",
+                _ => "unavailable"
+            };
+        }
+        catch { _status = "unavailable"; }
+    }
+}
