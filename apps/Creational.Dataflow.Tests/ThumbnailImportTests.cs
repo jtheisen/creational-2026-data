@@ -169,6 +169,30 @@ public sealed class ThumbnailImportTests
     }
 
     [Fact]
+    public async Task UnifiedBatchAdvancesPastOnePermanentThumbnailFailure()
+    {
+        var repository = new MemoryRepository();
+        var copier = new FakeCopier { FailTitle = "File:Broken.svg" };
+        using var http = new HttpClient(new MetadataHandler());
+        var service = new ThumbnailImportService(repository, copier,
+            new WikimediaImageInfo(http, "CreationalDataflow/1.0 (contact: test@example.org)"),
+            NullLogger<ThumbnailImportService>.Instance,
+            new FakeCatalog(["File:Broken.svg", "File:Good.jpg"]),
+            new MemoryManifestStore(), new FakeInfoStore());
+        var id = await service.CreateBatchAsync(ImageSelection.Parse("691846"), 0, 2, CancellationToken.None);
+
+        await service.ProcessPendingAsync(CancellationToken.None);
+
+        var batch = (await repository.GetBatchAsync(id, CancellationToken.None))!;
+        Assert.Equal("complete-with-errors", batch.Status);
+        Assert.Equal(2, batch.NextOffset);
+        Assert.Equal(1, batch.FailedImages);
+        Assert.Equal(1, batch.CopiedImages);
+        Assert.Equal("failed", (await repository.GetBatchItemAsync(id, 0, CancellationToken.None))!.Status);
+        Assert.Equal("copied", (await repository.GetBatchItemAsync(id, 1, CancellationToken.None))!.Status);
+    }
+
+    [Fact]
     public async Task CompletedCopyBatchRequestsDerivedThumbnailSweepOnce()
     {
         var scheduler = new FakeResizeScheduler();
@@ -473,12 +497,17 @@ public sealed class ThumbnailImportTests
     private sealed class FakeCopier : IThumbnailBlobCopier
     {
         public List<string> Copied { get; } = [];
+        public string? FailTitle { get; init; }
         public Task<bool> IsCurrentAsync(ThumbnailRendition row, CancellationToken ct) =>
             Task.FromResult(row.Status == "complete");
         public Task<ThumbnailCopyResult?> RecoverAsync(ThumbnailRendition row, CancellationToken ct) =>
             Task.FromResult<ThumbnailCopyResult?>(null);
         public Task<ThumbnailCopyResult> CopyAsync(string url, ThumbnailRendition row, CancellationToken ct)
-        { Copied.Add(row.Title); return Task.FromResult(new ThumbnailCopyResult(10, "abc")); }
+        {
+            if (row.Title == FailTitle) throw new InvalidOperationException("failing image");
+            Copied.Add(row.Title);
+            return Task.FromResult(new ThumbnailCopyResult(10, "abc"));
+        }
     }
 
     private sealed class MemoryManifestStore : IThumbnailBatchManifestStore

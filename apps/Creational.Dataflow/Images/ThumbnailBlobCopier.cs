@@ -54,6 +54,12 @@ public sealed class ThumbnailBlobCopier(HttpClient http, BlobServiceClient servi
             throw new InvalidOperationException("The image source is not an allowed Wikimedia URL.");
 
         using var response = await GetAllowedAsync(url, ct);
+        if (response.StatusCode == HttpStatusCode.TooManyRequests &&
+            response.Content.Headers.ContentLength is > 0 and <= 256 &&
+            (await response.Content.ReadAsStringAsync(ct)).Contains(
+                "Too many thumbnail requests for failing image", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "Wikimedia reports too many thumbnail requests for a failing image.");
         if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
             throw new WikimediaThrottledException(response.Headers.RetryAfter?.Delta ?? TimeSpan.FromMinutes(1));
         response.EnsureSuccessStatusCode();
