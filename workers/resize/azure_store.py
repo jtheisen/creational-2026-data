@@ -3,7 +3,7 @@
 import hashlib
 
 from azure.core.exceptions import ResourceNotFoundError
-from azure.data.tables import TableServiceClient, UpdateMode
+from azure.data.tables import EdmType, EntityProperty, TableServiceClient, UpdateMode
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient, ContentSettings
 
@@ -12,6 +12,11 @@ from .core import SourceDataError
 
 RENDITIONS = '__thumbnail_renditions'
 RUNS = '__resize_runs'
+
+
+def _values(row):
+    return {key: value.value if isinstance(value, EntityProperty) else value
+            for key, value in row.items()}
 
 
 class AzureResizeStore:
@@ -23,7 +28,7 @@ class AzureResizeStore:
         self._container = BlobServiceClient(account_url, credential).get_container_client('wikimedia-extracts')
 
     def run(self, run_id):
-        return dict(self._table.get_entity(partition_key=RUNS, row_key=run_id))
+        return _values(self._table.get_entity(partition_key=RUNS, row_key=run_id))
 
     def sources_after(self, cursor):
         query = "PartitionKey eq '__thumbnail_renditions' and Width eq 250"
@@ -31,7 +36,7 @@ class AzureResizeStore:
             query += f" and RowKey gt '{cursor}'"
         for row in self._table.query_entities(query_filter=query):
             if row.get('Status') == 'complete' and not row.get('Stale'):
-                yield dict(row)
+                yield _values(row)
 
     def read_source(self, source):
         blob = self._container.get_blob_client(source['BlobName'])
@@ -49,7 +54,7 @@ class AzureResizeStore:
 
     def rendition(self, row_key):
         try:
-            return dict(self._table.get_entity(partition_key=RENDITIONS, row_key=row_key))
+            return _values(self._table.get_entity(partition_key=RENDITIONS, row_key=row_key))
         except ResourceNotFoundError:
             return None
 
@@ -107,6 +112,8 @@ class AzureResizeStore:
 
     def save_rendition(self, row):
         entity = {'PartitionKey': RENDITIONS, **row}
+        if 'Bytes' in entity:
+            entity['Bytes'] = EntityProperty(entity['Bytes'], EdmType.INT64)
         self._table.upsert_entity(entity, mode=UpdateMode.REPLACE)
         if row.get('Status') == 'failed':
             self._table.upsert_entity({

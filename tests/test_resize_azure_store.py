@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import unittest
 
 from azure.core.exceptions import ResourceNotFoundError
+from azure.data.tables import EdmType, EntityProperty
 
 from workers.resize.azure_store import AzureResizeStore
 
@@ -43,6 +44,22 @@ class FakeContainer:
 
 
 class AzureResizeStoreTests(unittest.TestCase):
+    def test_int64_values_are_unwrapped_for_reads_and_written_as_int64(self):
+        class FakeTable:
+            def __init__(self): self.saved = None
+            def query_entities(self, query_filter):
+                yield {'RowKey': 'hash-250', 'Width': 250, 'Status': 'complete',
+                       'Bytes': EntityProperty(123, EdmType.INT64)}
+            def upsert_entity(self, entity, mode): self.saved = entity
+        table = FakeTable()
+        store = object.__new__(AzureResizeStore)
+        store._table = table
+
+        self.assertEqual(123, list(store.sources_after(''))[0]['Bytes'])
+        store.save_rendition({'RowKey': 'hash-20', 'Width': 20, 'Bytes': 42,
+                              'Status': 'complete'})
+        self.assertEqual(EntityProperty(42, EdmType.INT64), table.saved['Bytes'])
+
     def test_failed_rendition_is_indexed_by_run_for_dashboard(self):
         class FakeTable:
             def __init__(self): self.rows = []
