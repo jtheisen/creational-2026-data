@@ -23,7 +23,7 @@ class AzureResizeStore:
     def __init__(self, account_url='https://creational.blob.core.windows.net'):
         credential = DefaultAzureCredential()
         self._table = TableServiceClient(
-            account_url.replace('.blob.', '.table.'), credential
+            account_url.replace('.blob.', '.table.'), credential=credential
         ).get_table_client('CollectionTargets')
         self._container = BlobServiceClient(account_url, credential).get_container_client('wikimedia-extracts')
 

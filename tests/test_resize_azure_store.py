@@ -1,6 +1,7 @@
 import hashlib
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from azure.core.exceptions import ResourceNotFoundError
 from azure.data.tables import EdmType, EntityProperty
@@ -44,6 +45,13 @@ class FakeContainer:
 
 
 class AzureResizeStoreTests(unittest.TestCase):
+    def test_constructs_table_client_with_keyword_credential(self):
+        with patch('workers.resize.azure_store.DefaultAzureCredential') as credential, \
+                patch('workers.resize.azure_store.TableServiceClient') as tables, \
+                patch('workers.resize.azure_store.BlobServiceClient'):
+            AzureResizeStore()
+        self.assertIs(tables.call_args.kwargs['credential'], credential.return_value)
+
     def test_int64_values_are_unwrapped_for_reads_and_written_as_int64(self):
         class FakeTable:
             def __init__(self): self.saved = None
