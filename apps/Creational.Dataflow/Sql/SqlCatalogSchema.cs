@@ -5,10 +5,12 @@ namespace Creational.Dataflow.Sql;
 
 public static partial class SqlCatalogSchema
 {
+    public static string ValidateName(string schema) => SchemaName().IsMatch(schema)
+        ? schema : throw new ArgumentException("Expected a simple SQL schema name.", nameof(schema));
+
     public static string Render(string schema)
     {
-        if (!SchemaName().IsMatch(schema))
-            throw new ArgumentException("Expected a simple SQL schema name.", nameof(schema));
+        ValidateName(schema);
         const string resourceName = "Creational.Dataflow.Sql.Migrations.001_catalog.sql";
         using var stream = typeof(SqlCatalogSchema).Assembly.GetManifestResourceStream(resourceName)
             ?? throw new InvalidOperationException($"Missing embedded migration {resourceName}.");

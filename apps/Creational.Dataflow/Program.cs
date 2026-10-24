@@ -9,6 +9,7 @@ using Creational.Dataflow.Components;
 using Creational.Dataflow.Execution;
 using Creational.Dataflow.Images;
 using Creational.Dataflow.Storage;
+using Creational.Dataflow.Sql;
 using Creational.Dataflow.Targets;
 using Creational.Dataflow.Transfers;
 using MudBlazor.Services;
@@ -23,6 +24,19 @@ if (args.Length == 3 && args[0] == "--build-ott-edges")
 {
     await OttEdges.BuildAsync(args[1], args[2], CancellationToken.None);
     Console.WriteLine($"Wrote {args[2]}");
+    return;
+}
+
+if (args.Length == 7 && args[0] == "--load-sql-catalog")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for catalog loading.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    var shards = await new SourceManifestLoader(blobStore).LoadAsync(CancellationToken.None);
+    var loader = new SqlCatalogLoader(new SqlConnectionFactory(connectionString), schema);
+    var result = await loader.LoadAsync(args[1], args[2], short.Parse(args[3]), args[4],
+        short.Parse(args[5]), args[6], 5_000, shards.Select(x => x.Key).ToArray(), CancellationToken.None);
+    Console.WriteLine(JsonSerializer.Serialize(result));
     return;
 }
 

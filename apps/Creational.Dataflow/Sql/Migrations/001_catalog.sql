@@ -90,13 +90,18 @@ CREATE TABLE [__SCHEMA__].[ImageRights] (
 CREATE TABLE [__SCHEMA__].[PageImage] (
     CollectionId SMALLINT NOT NULL,
     PageId BIGINT NOT NULL,
-    ImageId INT NOT NULL,
+    ReferenceIndex INT NOT NULL,
+    FileTitle NVARCHAR(512) NOT NULL,
+    SourceWiki VARCHAR(16) NULL,
+    ImageId INT NULL,
     Role VARCHAR(32) NOT NULL,
-    CONSTRAINT PK_PageImage PRIMARY KEY CLUSTERED (CollectionId, PageId, ImageId, Role),
+    CONSTRAINT PK_PageImage PRIMARY KEY CLUSTERED (CollectionId, PageId, ReferenceIndex),
     CONSTRAINT FK_PageImage_Page FOREIGN KEY (CollectionId, PageId) REFERENCES [__SCHEMA__].[Page](CollectionId, PageId),
     CONSTRAINT FK_PageImage_Image FOREIGN KEY (ImageId) REFERENCES [__SCHEMA__].[Image](ImageId)
 );
-CREATE INDEX IX_PageImage_Image ON [__SCHEMA__].[PageImage](ImageId) INCLUDE (CollectionId, PageId, Role);
+CREATE INDEX IX_PageImage_Image ON [__SCHEMA__].[PageImage](ImageId) INCLUDE (CollectionId, PageId, Role) WHERE ImageId IS NOT NULL;
+CREATE INDEX IX_PageImage_Unlinked ON [__SCHEMA__].[PageImage](CollectionId, PageId, ReferenceIndex)
+    INCLUDE (SourceWiki, FileTitle) WHERE ImageId IS NULL AND SourceWiki IS NOT NULL;
 
 CREATE TABLE [__SCHEMA__].[Rendition] (
     ImageId INT NOT NULL,
@@ -112,4 +117,14 @@ CREATE TABLE [__SCHEMA__].[Rendition] (
     CONSTRAINT PK_Rendition PRIMARY KEY CLUSTERED (ImageId, Variant),
     CONSTRAINT FK_Rendition_Image FOREIGN KEY (ImageId) REFERENCES [__SCHEMA__].[Image](ImageId),
     CONSTRAINT CK_Rendition_Bytes CHECK (Bytes IS NULL OR Bytes >= 0)
+);
+
+CREATE TABLE [__SCHEMA__].[CatalogLoadCheckpoint] (
+    LoadKey NVARCHAR(256) NOT NULL,
+    SourceFingerprint CHAR(64) NOT NULL,
+    NextOrdinal BIGINT NOT NULL,
+    Completed BIT NOT NULL CONSTRAINT DF_CatalogLoadCheckpoint_Completed DEFAULT (0),
+    UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_CatalogLoadCheckpoint_UpdatedAt DEFAULT (SYSUTCDATETIME()),
+    CONSTRAINT PK_CatalogLoadCheckpoint PRIMARY KEY CLUSTERED (LoadKey),
+    CONSTRAINT CK_CatalogLoadCheckpoint_NextOrdinal CHECK (NextOrdinal >= 0)
 );
