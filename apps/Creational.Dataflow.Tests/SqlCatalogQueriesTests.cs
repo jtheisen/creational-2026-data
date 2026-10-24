@@ -115,6 +115,11 @@ public sealed class SqlCatalogQueriesTests
         Assert.Equal(0, Count(db, $"SELECT l.OttId FROM ({links}) l ANTI JOIN ({edges}) e ON l.OttId=e.ott_id"));
         Assert.Equal(0, Count(db, $"SELECT l.PageId FROM ({links}) l ANTI JOIN ({pages}) p USING (PageId)"));
         Assert.Equal(0, Count(db, $"SELECT r.PageId FROM ({references}) r ANTI JOIN ({images}) i ON r.SourceWiki=i.SourceWiki AND r.FileTitle=i.CanonicalFileTitle WHERE r.SourceWiki IS NOT NULL"));
+        Assert.Equal(0, Count(db, $"SELECT OttId FROM ({names}) WHERE Name IS NULL OR length(Name)>1024"));
+        Assert.Equal(0, Count(db, $"SELECT PageId FROM ({pages}) WHERE Title IS NULL OR length(Title)>512"));
+        Assert.Equal(0, Count(db, $"SELECT PageId FROM ({links}) WHERE MatchKind IS NULL OR length(MatchKind)>32"));
+        Assert.Equal(0, Count(db, $"SELECT SourceWiki FROM ({images}) WHERE MetadataStatus IS NULL OR length(CanonicalFileTitle)>512 OR length(SourceWiki)>16"));
+        Assert.Equal(0, Count(db, $"SELECT PageId FROM ({references}) WHERE Role IS NULL OR length(Role)>32 OR length(FileTitle)>512"));
     }
 
     private static int Count(DuckDBConnection db, string sql)
