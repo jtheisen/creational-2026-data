@@ -10,7 +10,8 @@ public sealed class ThumbnailImportService(
     ILogger<ThumbnailImportService> logger,
     IImageCatalog? catalog = null,
     IThumbnailBatchManifestStore? manifests = null,
-    IImageInfoStore? infoStore = null) : BackgroundService
+    IImageInfoStore? infoStore = null,
+    IResizeSweepScheduler? resizeScheduler = null) : BackgroundService
 {
     private readonly SemaphoreSlim _wake = new(0, 1);
     private ThumbnailBatchActivity? _activity;
@@ -365,6 +366,8 @@ public sealed class ThumbnailImportService(
                 await repository.SaveBatchAsync(batch, ct);
             }
         }
+        if (batch.CopiedImages > 0 && resizeScheduler is not null)
+            await resizeScheduler.RequestAsync(ct);
         await repository.SaveBatchAsync(batch with
         {
             Status = batch.FailedImages == 0 ? "complete" : "complete-with-errors", Error = null
@@ -375,6 +378,7 @@ public sealed class ThumbnailImportService(
     {
         await repository.SaveJobAsync(job with { Status = "running" }, ct);
         var failures = 0;
+        var copiedAny = false;
         foreach (var title in job.Titles)
         {
             ct.ThrowIfCancellationRequested();
@@ -400,6 +404,7 @@ public sealed class ThumbnailImportService(
                 if (info.ThumbnailUrl is null)
                     throw new InvalidOperationException(info.Error ?? "Wikimedia has no thumbnail for this file.");
                 var copied = await copier.CopyAsync(info.ThumbnailUrl, row, ct);
+                copiedAny = true;
                 await repository.SaveRenditionAsync(row with
                 {
                     Status = "complete", Bytes = copied.Bytes, Sha256 = copied.Sha256,
@@ -421,6 +426,8 @@ public sealed class ThumbnailImportService(
                 logger.LogWarning(error, "Thumbnail import failed for {Title}", title);
             }
         }
+        if (copiedAny && resizeScheduler is not null)
+            await resizeScheduler.RequestAsync(ct);
         await repository.SaveJobAsync(job with { Status = failures == 0 ? "complete" : "complete-with-errors" }, ct);
     }
 }

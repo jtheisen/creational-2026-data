@@ -43,6 +43,30 @@ public class ContainerAppsJobLauncherTests
         Assert.Equal("2Gi", container.GetProperty("resources").GetProperty("memory").GetString());
     }
 
+    [Fact]
+    public async Task ResizeStartUsesSameImageAndJobWithResizeCommand()
+    {
+        string? body = null;
+        var handler = new Handler(async request =>
+        {
+            body = await request.Content!.ReadAsStringAsync();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = new StringContent("{\"name\":\"resize-execution\"}") };
+        });
+        var launcher = new ContainerAppsJobLauncher(new HttpClient(handler), new TestCredential(),
+            new ContainerJobOptions("/subscriptions/s/resourceGroups/r/providers/Microsoft.App/jobs/j",
+                "registry/image:v1", "collection-worker"));
+
+        Assert.Equal("resize-execution", await launcher.StartResizeAsync("run-123", CancellationToken.None));
+        using var json = JsonDocument.Parse(body!);
+        var container = json.RootElement.GetProperty("containers")[0];
+        Assert.Equal("registry/image:v1", container.GetProperty("image").GetString());
+        Assert.Equal(["python", "-m", "workers.resize"],
+            container.GetProperty("command").EnumerateArray().Select(x => x.GetString()!).ToArray());
+        Assert.Equal(["--run-id", "run-123"],
+            container.GetProperty("args").EnumerateArray().Select(x => x.GetString()!).ToArray());
+    }
+
     private sealed class Handler(Func<HttpRequestMessage, Task<HttpResponseMessage>> respond) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => respond(request);

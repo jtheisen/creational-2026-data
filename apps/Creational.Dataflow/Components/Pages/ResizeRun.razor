@@ -1,0 +1,97 @@
+@page "/resize-runs/{Id}"
+@implements IAsyncDisposable
+@using Creational.Dataflow.Images
+@inject ResizeSweepService Resizes
+
+<MudStack Spacing="3">
+    <MudBreadcrumbs Items="_breadcrumbs" />
+    <MudText Typo="Typo.h4">Derived-thumbnail sweep</MudText>
+    @if (_error is not null)
+    {
+        <MudAlert Severity="Severity.Error">@_error</MudAlert>
+    }
+    else if (_run is null)
+    {
+        <MudProgressCircular Indeterminate="true" />
+    }
+    else
+    {
+        <MudPaper Class="pa-4">
+            <MudStack Spacing="1">
+                <MudText>Status: @_run.Status</MudText>
+                <MudText>@_run.Processed.ToString("N0") source images scanned · @_run.Generated.ToString("N0") generated · @_run.Skipped.ToString("N0") already current · @_run.Failed.ToString("N0") failed</MudText>
+                <MudText>Last source: @(_run.Cursor.Length == 0 ? "none yet" : _run.Cursor)</MudText>
+                @if (_run.Error is not null)
+                {
+                    <MudText Color="Color.Error">@_run.Error</MudText>
+                }
+            </MudStack>
+        </MudPaper>
+        @if (_run.Failed > 0)
+        {
+            <MudText Typo="Typo.h6">Failed renditions</MudText>
+            <MudText Color="Color.Secondary">Showing up to 100 failures from this sweep.</MudText>
+            <MudTable Items="_failures" Dense="true" Hover="true" RowsPerPage="20">
+                <HeaderContent><MudTh>Image</MudTh><MudTh>Width</MudTh><MudTh>Reason</MudTh></HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Image">@context.Title</MudTd>
+                    <MudTd DataLabel="Width">@context.Width px</MudTd>
+                    <MudTd DataLabel="Reason">@context.Error</MudTd>
+                </RowTemplate>
+                <PagerContent><MudTablePager /></PagerContent>
+            </MudTable>
+        }
+    }
+</MudStack>
+
+@code {
+    [Parameter] public string Id { get; set; } = "";
+    private ResizeSweepRun? _run;
+    private IReadOnlyList<ResizeFailure> _failures = [];
+    private string? _error;
+    private CancellationTokenSource? _stop;
+    private readonly List<BreadcrumbItem> _breadcrumbs =
+        [new("Collections", "/"), new("Image jobs", "/image-jobs"), new("Resize run", null, true)];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _stop = new CancellationTokenSource();
+        await RefreshAsync(_stop.Token);
+        _ = PollAsync(_stop.Token);
+    }
+
+    private async Task PollAsync(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(10), ct);
+                await InvokeAsync(async () => { await RefreshAsync(ct); StateHasChanged(); });
+                if (_run?.Status is "complete" or "complete-with-errors" or "failed" &&
+                    _run.ExecutionId is null) break;
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
+    private async Task RefreshAsync(CancellationToken ct)
+    {
+        try
+        {
+            _run = await Resizes.GetAsync(Id, ct);
+            if (_run is null) { _error = "Resize run was not found."; return; }
+            _failures = _run.Failed > 0 ? await Resizes.ListFailuresAsync(Id, 100, ct) : [];
+            _error = null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception error) { _error = error.Message; }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _stop?.Cancel();
+        _stop?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

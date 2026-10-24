@@ -2,6 +2,7 @@
 @implements IAsyncDisposable
 @using Creational.Dataflow.Images
 @inject ThumbnailImportService Imports
+@inject ResizeSweepService Resizes
 
 <MudStack Spacing="3">
     <MudBreadcrumbs Items="_breadcrumbs" />
@@ -17,6 +18,27 @@
     }
     else
     {
+        <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.SpaceBetween">
+            <MudText Typo="Typo.h6">Derived thumbnails</MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="_scheduling"
+                       OnClick="StartResizeAsync">Run full resize sweep</MudButton>
+        </MudStack>
+        <MudText Color="Color.Secondary">Derive 20, 40, 60, and 120px WebP images from every imported 250px image.</MudText>
+        @if (_resizeRuns.Count > 0)
+        {
+            <MudTable Items="_resizeRuns" Dense="true" Hover="true" RowsPerPage="10">
+                <HeaderContent><MudTh>Created</MudTh><MudTh>250px images scanned</MudTh><MudTh>Generated</MudTh><MudTh>Skipped</MudTh><MudTh>Failed</MudTh><MudTh>Status</MudTh></HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Created"><a href="@($"/resize-runs/{context.Id}")">@context.CreatedAt.ToString("yyyy-MM-dd HH:mm 'UTC'")</a></MudTd>
+                    <MudTd DataLabel="250px images scanned">@context.Processed.ToString("N0")</MudTd>
+                    <MudTd DataLabel="Generated">@context.Generated.ToString("N0")</MudTd>
+                    <MudTd DataLabel="Skipped">@context.Skipped.ToString("N0")</MudTd>
+                    <MudTd DataLabel="Failed">@context.Failed.ToString("N0")</MudTd>
+                    <MudTd DataLabel="Status">@context.Status @context.Error</MudTd>
+                </RowTemplate>
+                <PagerContent><MudTablePager /></PagerContent>
+            </MudTable>
+        }
         <MudText Typo="Typo.h6">Import runs</MudText>
         @if (_runs.Count == 0)
         {
@@ -80,9 +102,11 @@
 
 @code {
     private IReadOnlyList<ThumbnailImportRun> _runs = [];
+    private IReadOnlyList<ResizeSweepRun> _resizeRuns = [];
     private IReadOnlyList<ThumbnailImportBatch> _batches = [];
     private IReadOnlyList<Creational.Dataflow.Images.ThumbnailImportJob> _standalone = [];
     private bool _loaded;
+    private bool _scheduling;
     private string? _error;
     private CancellationTokenSource? _stop;
     private readonly List<BreadcrumbItem> _breadcrumbs =
@@ -113,6 +137,7 @@
         try
         {
             _runs = await Imports.ListRunsAsync(int.MaxValue, ct);
+            _resizeRuns = await Resizes.ListAsync(20, ct);
             _batches = (await Imports.ListBatchesAsync(int.MaxValue, ct))
                 .Where(x => x.ParentRunId is null).ToArray();
             _standalone = await Imports.ListStandaloneJobsAsync(int.MaxValue, ct);
@@ -121,6 +146,19 @@
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception error) { _error = error.Message; }
+    }
+
+    private async Task StartResizeAsync()
+    {
+        if (_scheduling || _stop is null) return;
+        _scheduling = true;
+        try
+        {
+            await Resizes.RequestAsync(_stop.Token);
+            await RefreshAsync(_stop.Token);
+        }
+        catch (Exception error) { _error = error.Message; }
+        finally { _scheduling = false; }
     }
 
     private static string SelectionLabel(ImageSelection selection) => selection.Kind == ImageSelectionKind.OttBranch

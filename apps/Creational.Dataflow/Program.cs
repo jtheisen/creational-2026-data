@@ -140,6 +140,10 @@ builder.Services.AddSingleton<IThumbnailImportRepository, ThumbnailImportReposit
 builder.Services.AddSingleton<IThumbnailBatchManifestStore, AzureThumbnailBatchManifestStore>();
 builder.Services.AddSingleton<IImageInfoSnapshotStore, AzureImageInfoSnapshotStore>();
 builder.Services.AddSingleton<IImageInfoStore, ImageInfoStore>();
+builder.Services.AddSingleton<IResizeSweepRepository, TableResizeSweepRepository>();
+builder.Services.AddSingleton<ResizeSweepService>();
+builder.Services.AddSingleton<IResizeSweepScheduler>(sp => sp.GetRequiredService<ResizeSweepService>());
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ResizeSweepService>());
 builder.Services.AddSingleton<IThumbnailBlobCopier>(sp =>
 {
     var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
@@ -154,7 +158,8 @@ builder.Services.AddSingleton(sp => new ThumbnailImportService(
     sp.GetRequiredService<ILogger<ThumbnailImportService>>(),
     sp.GetRequiredService<IImageCatalog>(),
     sp.GetRequiredService<IThumbnailBatchManifestStore>(),
-    sp.GetRequiredService<IImageInfoStore>()));
+    sp.GetRequiredService<IImageInfoStore>(),
+    sp.GetRequiredService<IResizeSweepScheduler>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<ThumbnailImportService>());
 builder.Services.AddSingleton<IStreamingCopier>(sp =>
 {
@@ -171,13 +176,19 @@ var jobResourceId = builder.Configuration["ContainerJob:ResourceId"];
 var jobImage = builder.Configuration["ContainerJob:Image"];
 if (!string.IsNullOrWhiteSpace(jobResourceId) && !string.IsNullOrWhiteSpace(jobImage))
 {
-    builder.Services.AddSingleton<IComputeJobLauncher>(sp => new ContainerAppsJobLauncher(
+    builder.Services.AddSingleton(sp => new ContainerAppsJobLauncher(
         new HttpClient(), credential, new ContainerJobOptions(jobResourceId, jobImage,
             builder.Configuration["ContainerJob:ContainerName"] ?? "collection-worker")));
+    builder.Services.AddSingleton<IComputeJobLauncher>(sp => sp.GetRequiredService<ContainerAppsJobLauncher>());
+    builder.Services.AddSingleton<IResizeJobLauncher>(sp => sp.GetRequiredService<ContainerAppsJobLauncher>());
     builder.Services.AddHostedService<QueueWorkDispatcher>();
 }
 else
-    builder.Services.AddSingleton<IComputeJobLauncher>(new UnavailableJobLauncher());
+{
+    builder.Services.AddSingleton<UnavailableJobLauncher>();
+    builder.Services.AddSingleton<IComputeJobLauncher>(sp => sp.GetRequiredService<UnavailableJobLauncher>());
+    builder.Services.AddSingleton<IResizeJobLauncher>(sp => sp.GetRequiredService<UnavailableJobLauncher>());
+}
 builder.Services.AddSingleton<CollectionImportEngine>();
 builder.Services.AddSingleton<ICollectionImportEngine>(sp => sp.GetRequiredService<CollectionImportEngine>());
 builder.Services.AddHostedService<AttemptReconciliationService>();

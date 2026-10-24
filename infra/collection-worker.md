@@ -37,6 +37,15 @@ entry point is `python -m workers.collection`. Give the job's managed identity
 containers if possible. It reads input manifests and artifacts and publishes
 an immutable attempt output group with `_COMPLETE.json` last.
 
+The same image also runs `python -m workers.resize --run-id <id>` for derived
+thumbnail sweeps. That command needs `Storage Table Data Contributor` on the
+`creational` account for `CollectionTargets` rendition and run rows, and
+`Storage Blob Data Owner` on `wikimedia-extracts` to soft-delete superseded
+Blob versions after replacement verification. The dashboard's Image jobs page
+starts one logical sweep across all current 250px renditions. The worker
+checkpoints after each source and yields before the Container Apps execution's
+four-hour timeout; the control plane starts another execution until complete.
+
 The App Service control plane starts an execution through the [manual job start
 API](https://learn.microsoft.com/en-us/rest/api/resource-manager/containerapps/jobs/start?view=rest-resource-manager-containerapps-2025-07-01)
 and supplies the entire container execution template, including image, CPU,

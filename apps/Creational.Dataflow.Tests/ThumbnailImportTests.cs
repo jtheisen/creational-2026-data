@@ -169,6 +169,24 @@ public sealed class ThumbnailImportTests
     }
 
     [Fact]
+    public async Task CompletedCopyBatchRequestsDerivedThumbnailSweepOnce()
+    {
+        var scheduler = new FakeResizeScheduler();
+        var repository = new MemoryRepository();
+        using var http = new HttpClient(new MetadataHandler());
+        var service = new ThumbnailImportService(repository, new FakeCopier(),
+            new WikimediaImageInfo(http, "CreationalDataflow/1.0 (contact: test@example.org)"),
+            NullLogger<ThumbnailImportService>.Instance,
+            new FakeCatalog(["File:A.jpg", "File:B.jpg"]), new MemoryManifestStore(),
+            new FakeInfoStore(), scheduler);
+        await service.CreateBatchAsync(ImageSelection.Parse("691846"), 0, 2, CancellationToken.None);
+
+        await service.ProcessPendingAsync(CancellationToken.None);
+
+        Assert.Equal(1, scheduler.Requests);
+    }
+
+    [Fact]
     public async Task UnifiedBatchRestartAdvancesPersistedItemWithoutCopyingItAgain()
     {
         var repository = new MemoryRepository();
@@ -439,6 +457,16 @@ public sealed class ThumbnailImportTests
             foreach (var chunk in titles.Chunk(chunkSize))
                 await sink(chunk.Select(x => new ImageCandidate(x, "Article", "taxobox")).ToArray(), ct);
             return titles.Length;
+        }
+    }
+
+    private sealed class FakeResizeScheduler : IResizeSweepScheduler
+    {
+        public int Requests { get; private set; }
+        public Task<string> RequestAsync(CancellationToken ct)
+        {
+            Requests++;
+            return Task.FromResult("resize-run");
         }
     }
 

@@ -10,14 +10,28 @@ namespace Creational.Dataflow.Execution;
 public sealed record ContainerJobOptions(string ResourceId, string Image, string ContainerName,
     double Cpu = 1, string Memory = "2Gi");
 
+public interface IResizeJobLauncher
+{
+    Task<string> StartResizeAsync(string runId, CancellationToken cancellationToken);
+    Task<ComputeExecutionStatus> GetStatusAsync(string executionId, CancellationToken cancellationToken);
+}
+
 public sealed class ContainerAppsJobLauncher(HttpClient http, TokenCredential credential,
-    ContainerJobOptions options) : IComputeJobLauncher
+    ContainerJobOptions options) : IComputeJobLauncher, IResizeJobLauncher
 {
     private readonly string _base = "https://management.azure.com" + options.ResourceId.TrimEnd('/');
     private const string Version = "2025-07-01";
 
     public async Task<string> StartAsync(TargetId target, string inputManifestUri, string outputPrefix,
         string recipeVersion, CancellationToken cancellationToken)
+        => await StartCommandAsync(["python", "-m", "workers.collection"],
+            ["--target-id", target.ToString(), "--inputs-manifest", inputManifestUri,
+             "--output-prefix", outputPrefix, "--recipe-version", recipeVersion], cancellationToken);
+
+    public Task<string> StartResizeAsync(string runId, CancellationToken cancellationToken)
+        => StartCommandAsync(["python", "-m", "workers.resize"], ["--run-id", runId], cancellationToken);
+
+    private async Task<string> StartCommandAsync(string[] command, string[] args, CancellationToken cancellationToken)
     {
         var payload = new
         {
@@ -27,9 +41,7 @@ public sealed class ContainerAppsJobLauncher(HttpClient http, TokenCredential cr
                 {
                     name = options.ContainerName, image = options.Image,
                     resources = new { cpu = options.Cpu, memory = options.Memory },
-                    command = new[] { "python", "-m", "workers.collection" },
-                    args = new[] { "--target-id", target.ToString(), "--inputs-manifest", inputManifestUri,
-                        "--output-prefix", outputPrefix, "--recipe-version", recipeVersion }
+                    command, args
                 }
             }
         };

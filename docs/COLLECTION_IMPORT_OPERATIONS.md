@@ -28,6 +28,17 @@ delete requires `Storage Blob Data Owner` on the container; the App Service
 identity has this role. A stale toggle and whole-subtree import remain future
 work.
 
+The Image jobs page can start a full derived-thumbnail sweep. The existing
+Python Container Apps worker reads complete 250px rendition rows and produces
+static WebP versions at 20, 40, 60, and 120px. Derived Blobs use
+`thumbnails/<width>px/<hash-prefix>/<title-hash>/<filename-stem>.webp`.
+Each width has its own `__thumbnail_renditions` Table row with the output
+SHA-256, source 250px SHA-256, and `RecipeVersion`. The worker verifies the
+source checksum, skips current outputs, and checkpoints its Table cursor after
+each source. The control plane resumes the same run across Container Apps
+executions as needed. Newly completed 250px copy batches request a further
+sweep; an import arriving during a sweep requests a subsequent pass.
+
 The image preview also offers a bounded batch action, initially starting at its
 current page but accepting an exact starting image and a count of 1–1,000
 (default 100). A batch row persists the selection, offset, and per-image
