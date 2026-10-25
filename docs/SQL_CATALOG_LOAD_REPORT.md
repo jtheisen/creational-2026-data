@@ -1,43 +1,72 @@
-# SQL catalog load status
+# SQL catalog load and Basic-tier benchmark
 
-The loader and Basic-tier benchmark are prepared on the `feat/sql-catalog` branch.
-No live SQL load or tier measurement has been run yet. The sandbox's broader
-Azure login was logged out after it repaired the database users. The remaining
-load can use the sandbox identity's ordinary database and Blob access.
+Measured on 2026-10-25 in the `creational` Azure SQL Database, West Europe,
+Basic (5 DTU, 2 GiB maximum). The sandbox service principal loaded the pinned
+enwiki 2026-10-01 and OTT 3.3 catalog into schema `catalog` using `SqlBulkCopy`
+and transactional source checkpoints. A run was stopped after 270,000 taxon
+rows and resumed successfully with 20,000-row batches.
 
-## Prepared inputs
+## Loaded rows and storage
 
-The locally pinned Parquet projections were checked on 2026-10-24:
+| Table | Rows | Reserved MiB, including indexes |
+|---|---:|---:|
+| Taxon | 4,528,126 | 454.9 |
+| TaxonName | 3,157,341 | 230.0 |
+| Page | 503,735 | 103.9 |
+| TaxonPage | 427,481 | 84.8 |
+| Image | 400,545 | 137.2 |
+| PageImage | 478,479 | 195.2 |
 
-| Projection | Rows |
-|---|---:|
-| Full OTT edge tree | 4,528,126 |
-| Taxon names | 3,157,341 |
-| Wikipedia pages | 503,735 |
-| Distinct resolved image identities | 400,545 |
-| Image references with a file title | 478,479 |
+The data file has allocated **1,232 MiB** of the **2,048 MiB** Basic limit,
+leaving 816 MiB before that limit. Catalog tables reserve about 1,206 MiB.
+`ImageRights`, `Rendition`, and operational job/attempt tables are still empty
+or not yet created. This establishes catalog fit, not complete migration fit.
+Article text, markup, Parquet, imageinfo JSON, and image bytes remain in Blob.
 
-The checks also found no duplicate taxon names, duplicate taxon/page links,
-duplicate image source/title keys, or orphan page/taxon references in the
-projected data. References without a source wiki retain their file title and
-will have a null image ID. References without a file title contribute to each
-page's unresolved count.
+All six source checkpoints completed. The catalog has 476,677 page/image
+references linked to global image IDs. Another 1,802 have a known file title
+but unresolved source wiki and therefore remain unlinked. Pages report 1,386
+markup references without a file title. Validation found zero missing or
+incorrect taxon/page DFS positions and zero unlinked references with a known
+source wiki. The sum of recorded original image sizes is 901,014,677,035
+bytes; this is source metadata, not bytes copied to the new `images` container.
 
-## Next checkpoint
+## Subtree benchmark
 
-1. Run the SQL integration tests with `CREATIONAL_SQL_TEST_CONNECTION_STRING`
-   using the sandbox identity's narrow SQL login. These tests create and remove
-   isolated schemas. The ordinary test suite does not execute the SQL cases
-   without that environment variable.
-2. Run `--load-sql-catalog` on a machine with the manifest-verified local
-   Parquet snapshot and the taxonomy names file. Set
-   `CREATIONAL_SQL_CONNECTION_STRING` and optionally
-   `CREATIONAL_SQL_CATALOG_SCHEMA` (default `catalog`). The command arguments
-   are `<snapshot-root> <taxonomy-names.parquet> <collection-id>
-   <collection-key> <tree-id> <tree-key>`.
-3. Run [catalog_benchmark.sql](../apps/Creational.Dataflow/Sql/catalog_benchmark.sql)
-   and record actual rows, allocated/used MB, and cold/warm Carnivora query
-   timings here. Compare the result with the 2 GB/5 DTU Basic tier before
-   wiring SQL into the live dashboard.
+The query selects distinct pages by a DFS-range index on `TaxonPage`, then
+distinct linked image IDs, then sums `Image.OriginalBytes`. Each stage uses a
+temporary table to avoid repeating the page search. Timings include the three
+stages on Basic; the first pass follows the load and the second repeats the
+same query. They are not guaranteed cold/warm cache measurements.
 
-The current Table-backed dashboard remains the active control plane.
+| OTT root | Pages | Distinct images | Original bytes | First pass | Repeat |
+|---|---:|---:|---:|---:|---:|
+| Carnivora (44565) | 712 | 3,213 | 9,693,597,488 | 3.3 s | 0.1 s |
+| Tetrapoda (229562) | 42,226 | 82,284 | 204,707,994,494 | 6.8 s | 6.3 s |
+| Metazoa (691846) | 320,503 | 242,696 | 543,174,907,780 | 65.9 s | 20.8 s |
+
+Before the DFS position was materialized on `TaxonPage`, collecting Metazoa's
+page IDs alone took about 28 seconds. The indexed collection took 5.6 seconds;
+the rest of the repeat query spent about 12.4 seconds finding distinct images
+and 2.8 seconds summing their metadata.
+
+**Assessment:** Basic fits the catalog and gives usable response times for
+small clades. A broad Metazoa aggregate is too slow for an immediate dashboard
+response. Cache broad aggregates or compute them in background before routing
+the live dashboard to SQL. The 816 MiB headroom must also be checked against
+rights, rendition, and operational tables before committing to Basic as the
+final tier. [The benchmark SQL](../apps/Creational.Dataflow/Sql/catalog_benchmark.sql)
+can be rerun for other roots.
+
+## Deployment state and next work
+
+The live dashboard and image workers still use Azure Tables. No image Blobs
+were renamed or copied. The next migration stage is the operational schema and
+repository, plus measurement of its rows and broad-aggregate strategy. Cutover
+requires those checks and a separate verification of existing image assets.
+
+For local SQL work in this sandbox, set `AZURE_TOKEN_CREDENTIALS=AzureCliCredential`
+alongside `Authentication=Active Directory Default`. Without this selector,
+SqlClient's default credential chain exceeded the 30-second connection timeout
+despite a valid Azure CLI login. The App Service should use its own managed
+identity authentication mode.

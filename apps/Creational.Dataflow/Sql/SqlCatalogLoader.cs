@@ -71,6 +71,7 @@ public sealed class SqlCatalogLoader(SqlConnectionFactory connections, string sc
         counts["TaxonPage"] = await LoadQueryAsync(sql, duck, "TaxonPage", $"TaxonPage:{treeId}:{collectionId}",
             inputs.CorrelationFingerprint, SqlCatalogQueries.TaxonPages(inputs.Root, treeId, collectionId),
             batchSize, cancellationToken);
+        await FillTaxonPageDfsStartAsync(sql, treeId, collectionId, cancellationToken);
 
         await CreateImageBatchTableAsync(sql, cancellationToken);
         var imageTransform = new SqlCatalogBatchTransform("#CatalogImageBatch", $"""
@@ -160,12 +161,50 @@ public sealed class SqlCatalogLoader(SqlConnectionFactory connections, string sc
     {
         await using var probe = new SqlCommand("SELECT OBJECT_ID(@name, 'U')", connection);
         probe.Parameters.AddWithValue("@name", $"{_schema}.CatalogLoadCheckpoint");
-        if (await probe.ExecuteScalarAsync(ct) is not DBNull) return;
-        await using var createSchema = new SqlCommand($"IF SCHEMA_ID(N'{_schema}') IS NULL EXEC(N'CREATE SCHEMA [{_schema}]')", connection);
-        await createSchema.ExecuteNonQueryAsync(ct);
-        await using var migration = new SqlCommand(SqlCatalogSchema.Render(_schema), connection)
+        if (await probe.ExecuteScalarAsync(ct) is DBNull)
+        {
+            await using var createSchema = new SqlCommand($"IF SCHEMA_ID(N'{_schema}') IS NULL EXEC(N'CREATE SCHEMA [{_schema}]')", connection);
+            await createSchema.ExecuteNonQueryAsync(ct);
+            await using var migration = new SqlCommand(SqlCatalogSchema.Render(_schema), connection)
+            { CommandTimeout = 120 };
+            await migration.ExecuteNonQueryAsync(ct);
+        }
+        await using var dfsMigration = new SqlCommand(SqlCatalogSchema.RenderTaxonPageDfsColumn(_schema), connection)
         { CommandTimeout = 120 };
-        await migration.ExecuteNonQueryAsync(ct);
+        await dfsMigration.ExecuteNonQueryAsync(ct);
+    }
+
+    private async Task FillTaxonPageDfsStartAsync(SqlConnection connection, short treeId,
+        short collectionId, CancellationToken ct)
+    {
+        await using (var fill = new SqlCommand($"""
+            UPDATE p SET DfsStart=t.DfsStart
+            FROM [{_schema}].[TaxonPage] p
+            JOIN [{_schema}].[Taxon] t ON t.TreeId=p.TreeId AND t.OttId=p.OttId
+            WHERE p.TreeId=@tree AND p.CollectionId=@collection AND p.DfsStart IS NULL;
+            """, connection) { CommandTimeout = 600 })
+        {
+            fill.Parameters.Add("@tree", SqlDbType.SmallInt).Value = treeId;
+            fill.Parameters.Add("@collection", SqlDbType.SmallInt).Value = collectionId;
+            await fill.ExecuteNonQueryAsync(ct);
+        }
+        await using (var verify = new SqlCommand($"""
+            SELECT COUNT_BIG(*) FROM [{_schema}].[TaxonPage]
+            WHERE TreeId=@tree AND CollectionId=@collection AND DfsStart IS NULL;
+            """, connection))
+        {
+            verify.Parameters.Add("@tree", SqlDbType.SmallInt).Value = treeId;
+            verify.Parameters.Add("@collection", SqlDbType.SmallInt).Value = collectionId;
+            if (Convert.ToInt64(await verify.ExecuteScalarAsync(ct)) != 0)
+                throw new InvalidDataException("Taxon/page DFS positions are incomplete.");
+        }
+        await using var index = new SqlCommand($"""
+            IF NOT EXISTS (SELECT 1 FROM sys.indexes
+                WHERE object_id=OBJECT_ID(N'{_schema}.TaxonPage') AND name=N'IX_TaxonPage_DfsStart')
+                CREATE INDEX IX_TaxonPage_DfsStart ON [{_schema}].[TaxonPage]
+                    (TreeId,CollectionId,DfsStart,PageId) WHERE DfsStart IS NOT NULL;
+            """, connection) { CommandTimeout = 600 };
+        await index.ExecuteNonQueryAsync(ct);
     }
 
     private async Task EnsureVersionAsync(SqlConnection connection, string table, string idColumn,

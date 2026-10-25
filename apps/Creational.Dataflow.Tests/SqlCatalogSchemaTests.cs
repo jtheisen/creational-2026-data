@@ -82,18 +82,22 @@ public sealed class SqlCatalogSchemaTests
         {
             await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
             await ExecuteAsync(SqlCatalogSchema.Render(schema), connection, transaction);
+            await ExecuteAsync(SqlCatalogSchema.RenderTaxonPageDfsColumn(schema), connection, transaction);
+            await ExecuteAsync(SqlCatalogSchema.RenderTaxonPageDfsColumn(schema), connection, transaction);
             await ExecuteAsync($"INSERT INTO [{schema}].Collection(CollectionId,CollectionKey) VALUES (1,N'enwiki-2026-10-01')", connection, transaction);
             await ExecuteAsync($"INSERT INTO [{schema}].TaxonomyTree(TreeId,TreeKey) VALUES (1,N'ott3.3')", connection, transaction);
             await ExecuteAsync($"INSERT INTO [{schema}].Taxon(TreeId,OttId,ParentOttId,DfsStart,DfsEndExclusive) VALUES (1,10,NULL,1,4),(1,11,10,2,4),(1,12,11,3,4)", connection, transaction);
             await ExecuteAsync($"INSERT INTO [{schema}].TaxonName(TreeId,OttId,Name) VALUES (1,10,N'Life'),(1,12,N'Child species')", connection, transaction);
             await ExecuteAsync($"INSERT INTO [{schema}].Image(SourceWiki,CanonicalFileTitle) VALUES ('enwiki',N'File:Example.jpg'),('commonswiki',N'File:Example.jpg')", connection, transaction);
             await ExecuteAsync($"INSERT INTO [{schema}].Page(CollectionId,PageId,Title) VALUES (1,100,N'Example animal')", connection, transaction);
+            await ExecuteAsync($"INSERT INTO [{schema}].TaxonPage(TreeId,OttId,CollectionId,PageId,MatchKind,DfsStart) VALUES (1,12,1,100,'exact',3)", connection, transaction);
             await ExecuteAsync($"INSERT INTO [{schema}].PageImage(CollectionId,PageId,ReferenceIndex,FileTitle,SourceWiki,ImageId,Role) VALUES (1,100,0,N'File:Unknown.jpg',NULL,NULL,'taxobox')", connection, transaction);
 
             Assert.Equal(3, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].Taxon WHERE TreeId=1 AND DfsStart>=1 AND DfsStart<4", connection, transaction));
             Assert.Equal(2, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].Image WHERE CanonicalFileTitle=N'File:Example.jpg'", connection, transaction));
             Assert.Equal(0, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].TaxonName WHERE OttId=11", connection, transaction));
             Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].PageImage WHERE ImageId IS NULL AND FileTitle=N'File:Unknown.jpg'", connection, transaction));
+            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].TaxonPage WHERE DfsStart>=2 AND DfsStart<4", connection, transaction));
             Assert.Equal("smallint", await TypeAsync(schema, "Collection", "CollectionId", connection, transaction));
             Assert.Equal("int", await TypeAsync(schema, "Taxon", "OttId", connection, transaction));
             Assert.Equal("bigint", await TypeAsync(schema, "Page", "PageId", connection, transaction));
