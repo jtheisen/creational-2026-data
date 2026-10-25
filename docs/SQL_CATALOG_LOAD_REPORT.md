@@ -39,12 +39,18 @@ for text-bearing tables, especially `TaxonName`, and then `Page`, `Image`, and
 write performance before applying it to the live Basic database. Indexes need
 to be assessed separately from their tables.
 
-The database collation is `Latin1_General_100_CI_AS_SC_UTF8`. Before loading
-`ImageRights`, change its `LicenseShortName` and `Attribution` columns from
-`NVARCHAR` to `VARCHAR` so those fields use UTF-8 storage. Check the byte limits
-against real metadata: `VARCHAR(n)` limits bytes, whereas the current
-`NVARCHAR(n)` limits two-byte units. The existing `LicenseUrl` and
-`RawImageInfoPath` columns are already `VARCHAR`.
+The database collation is `Latin1_General_100_CI_AS_SC_UTF8`. The intended SQL
+schema uses `VARCHAR` for **all text columns**, not `NVARCHAR`; this applies to
+taxon names, page and image titles, collection and tree keys, rights fields,
+errors, and load keys. Review fixed-width textual hashes currently declared as
+`CHAR` as part of that consistency pass (or store their decoded bytes as
+`BINARY`). The existing loaded schema still has `NVARCHAR` columns, so this
+requires a later migration, not just a change to the initial schema script.
+Keep exact image-title comparisons with an explicit binary UTF-8 collation and
+update loader staging columns, casts, and parameters as needed. Check the byte
+limits against real data: `VARCHAR(n)` limits bytes, whereas `NVARCHAR(n)`
+limits two-byte units. Measure the resulting space savings before relying on
+them for Basic-tier capacity.
 
 `Taxon` is the largest table. After the operational migration, measure whether
 all of its stored columns and indexes are needed by the actual queries; some
