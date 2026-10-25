@@ -39,6 +39,13 @@ for text-bearing tables, especially `TaxonName`, and then `Page`, `Image`, and
 write performance before applying it to the live Basic database. Indexes need
 to be assessed separately from their tables.
 
+The database collation is `Latin1_General_100_CI_AS_SC_UTF8`. Before loading
+`ImageRights`, change its `LicenseShortName` and `Attribution` columns from
+`NVARCHAR` to `VARCHAR` so those fields use UTF-8 storage. Check the byte limits
+against real metadata: `VARCHAR(n)` limits bytes, whereas the current
+`NVARCHAR(n)` limits two-byte units. The existing `LicenseUrl` and
+`RawImageInfoPath` columns are already `VARCHAR`.
+
 `Taxon` is the largest table. After the operational migration, measure whether
 all of its stored columns and indexes are needed by the actual queries; some
 tree information may be derivable or represented more compactly. Also assess
