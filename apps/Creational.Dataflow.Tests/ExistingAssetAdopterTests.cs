@@ -91,6 +91,7 @@ public class ExistingAssetAdopterTests
 
     private sealed class DeniedRepository : ITargetRepository
     {
+        public Task<TargetState?> GetTargetAsync(TargetId id, CancellationToken ct) => throw new UnauthorizedAccessException();
         public Task<IReadOnlyDictionary<TargetId, TargetState>> GetCollectionAsync(string collection, CancellationToken ct) =>
             throw new UnauthorizedAccessException();
         public Task<TargetState> MarkStaleAsync(TargetId id, string reason, CancellationToken ct) => throw new UnauthorizedAccessException();
@@ -136,6 +137,8 @@ public class ExistingAssetAdopterTests
     private sealed class MemoryRepository : ITargetRepository
     {
         private readonly Dictionary<TargetId, TargetState> _states = [];
+        public Task<TargetState?> GetTargetAsync(TargetId id, CancellationToken ct) =>
+            Task.FromResult<TargetState?>(_states.GetValueOrDefault(id));
         public Task<IReadOnlyDictionary<TargetId, TargetState>> GetCollectionAsync(string collection, CancellationToken ct) =>
             Task.FromResult<IReadOnlyDictionary<TargetId, TargetState>>(_states.Where(kv => kv.Key.Collection == collection)
                 .ToDictionary(kv => kv.Key, kv => kv.Value));

@@ -5,12 +5,20 @@ import sys
 
 from .azure_store import AzureResizeStore
 from .core import run_sweep
+from .sql_manifest import AzureSqlResizeStore, run_manifest
 
 
 def main():
     parser = argparse.ArgumentParser(description='Derive all smaller thumbnail widths')
-    parser.add_argument('--run-id', required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument('--run-id')
+    source.add_argument('--sql-manifest')
     args = parser.parse_args()
+    if args.sql_manifest:
+        store = AzureSqlResizeStore(os.getenv('CREATIONAL_STORAGE_ACCOUNT_URL',
+                                             'https://creational.blob.core.windows.net'))
+        print(json.dumps(run_manifest(store, store.load_manifest(args.sql_manifest))), flush=True)
+        return
     store = AzureResizeStore(os.getenv('CREATIONAL_STORAGE_ACCOUNT_URL',
                                      'https://creational.blob.core.windows.net'))
     store.attach_run(args.run_id)

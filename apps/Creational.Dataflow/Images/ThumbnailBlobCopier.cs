@@ -1,5 +1,6 @@
 using System.Net;
 using System.Security.Cryptography;
+using Azure;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 
@@ -19,10 +20,11 @@ public interface IThumbnailBlobCopier
     Task<ThumbnailCopyResult> CopyAsync(string sourceUrl, ThumbnailRendition rendition, CancellationToken ct);
 }
 
-public sealed class ThumbnailBlobCopier(HttpClient http, BlobServiceClient service, WikimediaRequestPacer pacer) : IThumbnailBlobCopier
+public sealed class ThumbnailBlobCopier(HttpClient http, BlobServiceClient service, WikimediaRequestPacer pacer,
+    string containerName = "wikimedia-extracts") : IThumbnailBlobCopier
 {
     private const int MaxBytes = 16 * 1024 * 1024;
-    private readonly BlobContainerClient _container = service.GetBlobContainerClient("wikimedia-extracts");
+    private readonly BlobContainerClient _container = service.GetBlobContainerClient(containerName);
 
     public async Task<bool> IsCurrentAsync(ThumbnailRendition rendition, CancellationToken ct)
     {
@@ -49,6 +51,10 @@ public sealed class ThumbnailBlobCopier(HttpClient http, BlobServiceClient servi
     }
 
     public async Task<ThumbnailCopyResult> CopyAsync(string sourceUrl, ThumbnailRendition rendition, CancellationToken ct)
+        => await CopyAsync(sourceUrl, rendition, ct, null);
+
+    public async Task<ThumbnailCopyResult> CopyAsync(string sourceUrl, ThumbnailRendition rendition,
+        CancellationToken ct, Func<CancellationToken, Task<bool>>? leaseIsCurrent)
     {
         if (!Uri.TryCreate(sourceUrl, UriKind.Absolute, out var url) || !Allowed(url))
             throw new InvalidOperationException("The image source is not an allowed Wikimedia URL.");
@@ -83,19 +89,35 @@ public sealed class ThumbnailBlobCopier(HttpClient http, BlobServiceClient servi
         if (old is not null && string.IsNullOrWhiteSpace(old.VersionId))
             throw new InvalidOperationException("Blob versioning is required before replacing an imported thumbnail.");
 
+        if (leaseIsCurrent is not null && !await leaseIsCurrent(ct))
+            throw new InvalidOperationException("Copy lease expired before publishing the thumbnail.");
         buffer.Position = 0;
-        await blob.UploadAsync(buffer, new BlobUploadOptions
+        var attemptId = Guid.NewGuid().ToString("N");
+        try
         {
-            HttpHeaders = new BlobHttpHeaders { ContentType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream" },
-            Metadata = new Dictionary<string, string> { ["sha256"] = hash }
-        }, ct);
-        var committed = (await blob.GetPropertiesAsync(cancellationToken: ct)).Value;
-        if (committed.ContentLength != buffer.Length || !committed.Metadata.TryGetValue("sha256", out var recorded) || recorded != hash)
-            throw new InvalidOperationException("The uploaded thumbnail did not verify.");
-        if (!await ContentMatchesAsync(blob, hash, ct))
-            throw new InvalidOperationException("The uploaded thumbnail content checksum did not verify.");
+            var written = (await blob.UploadAsync(buffer, new BlobUploadOptions
+            {
+                HttpHeaders = new BlobHttpHeaders { ContentType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream" },
+                Metadata = new Dictionary<string, string> { ["sha256"] = hash, ["write_attempt"] = attemptId },
+                Conditions = old is null ? new BlobRequestConditions { IfNoneMatch = ETag.All } :
+                    new BlobRequestConditions { IfMatch = old.ETag }
+            }, ct)).Value;
+            var committed = (await blob.GetPropertiesAsync(cancellationToken: ct)).Value;
+            if (committed.ETag != written.ETag || committed.ContentLength != buffer.Length ||
+                !committed.Metadata.TryGetValue("sha256", out var recorded) || recorded != hash)
+                throw new InvalidOperationException("The uploaded thumbnail did not verify.");
+            if (!await ContentMatchesAsync(blob, hash, ct))
+                throw new InvalidOperationException("The uploaded thumbnail content checksum did not verify.");
+            if (leaseIsCurrent is not null && !await leaseIsCurrent(ct))
+                throw new InvalidOperationException("Copy lease expired before verification finished.");
+        }
+        catch
+        {
+            await SqlImageBlobStore.RestoreOwnedAsync(blob, old, attemptId, CancellationToken.None);
+            throw;
+        }
         if (old is not null)
-            await blob.WithVersion(old.VersionId).DeleteIfExistsAsync(cancellationToken: ct);
+            await SqlImageBlobStore.DeletePreviousVersionAsync(blob, old.VersionId, ct);
         return new(buffer.Length, hash);
     }
 

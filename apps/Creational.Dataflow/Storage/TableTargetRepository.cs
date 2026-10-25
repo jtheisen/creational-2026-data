@@ -10,6 +10,13 @@ public sealed class TableTargetRepository(TableClient table) : ITargetRepository
     private static string Partition(string collection) => Uri.EscapeDataString(collection);
     private static string Row(TargetId id) => Uri.EscapeDataString(id.Kind) + "|" + Uri.EscapeDataString(id.Key);
 
+    public async Task<TargetState?> GetTargetAsync(TargetId id, CancellationToken cancellationToken)
+    {
+        var response = await table.GetEntityIfExistsAsync<TableEntity>(Partition(id.Collection), Row(id),
+            cancellationToken: cancellationToken);
+        return response.HasValue ? Decode(response.Value!, id.Collection) : null;
+    }
+
     public async Task<IReadOnlyDictionary<TargetId, TargetState>> GetCollectionAsync(string collection, CancellationToken cancellationToken)
     {
         var states = new Dictionary<TargetId, TargetState>();

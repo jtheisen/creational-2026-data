@@ -8,7 +8,7 @@ public interface IResizeSweepScheduler
 }
 
 public sealed class ResizeSweepService(IResizeSweepRepository repository, IResizeJobLauncher launcher,
-    ILogger<ResizeSweepService> logger) : BackgroundService, IResizeSweepScheduler
+    ILogger<ResizeSweepService> logger, bool allowLegacyWrites = true) : BackgroundService, IResizeSweepScheduler
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly SemaphoreSlim _wake = new(0, 1);
@@ -23,6 +23,8 @@ public sealed class ResizeSweepService(IResizeSweepRepository repository, IResiz
 
     public async Task<string> RequestAsync(CancellationToken ct)
     {
+        if (!allowLegacyWrites)
+            throw new InvalidOperationException("Legacy resize sweeps are read-only during the SQL cutover.");
         await _gate.WaitAsync(ct);
         try
         {

@@ -4,6 +4,7 @@ namespace Creational.Dataflow.Storage;
 
 public interface ITargetRepository
 {
+    Task<TargetState?> GetTargetAsync(TargetId id, CancellationToken cancellationToken);
     Task<IReadOnlyDictionary<TargetId, TargetState>> GetCollectionAsync(string collection, CancellationToken cancellationToken);
     Task<TargetState> MarkStaleAsync(TargetId id, string reason, CancellationToken cancellationToken);
     Task<TargetState> BeginAttemptAsync(TargetId id, string attemptId, long expectedStaleRevision, CancellationToken cancellationToken);

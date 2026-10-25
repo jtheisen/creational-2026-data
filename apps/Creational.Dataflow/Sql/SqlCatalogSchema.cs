@@ -27,6 +27,24 @@ public static partial class SqlCatalogSchema
     public static string RenderCompactImages(string schema)
         => RenderResource(schema, "005_compact_images.sql");
 
+    public static string RenderOperationalState(string schema)
+        => RenderResource(schema, "006_operational_state.sql");
+
+    public static string RenderImageWork(string schema)
+        => RenderResource(schema, "007_image_work.sql");
+
+    public static string RenderImageAdoption(string schema)
+        => RenderResource(schema, "008_image_adoption.sql");
+
+    public static string RenderResizeBatch(string schema)
+        => RenderResource(schema, "009_resize_batch.sql");
+
+    public static string RenderSourceGeneration(string schema)
+        => RenderResource(schema, "010_source_generation.sql");
+
+    public static string RenderPendingRenditionIndexes(string schema)
+        => RenderResource(schema, "011_pending_rendition_indexes.sql");
+
     public static string RenderImageBatchTable() => """
         CREATE TABLE #CatalogImageBatch (
             SourceWiki VARCHAR(16) NOT NULL,

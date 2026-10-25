@@ -51,8 +51,8 @@ public sealed class QueueWorkDispatcher(QueueClient queue, ITargetRepository rep
     public static async Task<bool> ProcessAsync(QueueWorkItem item, ITargetRepository repository,
         IComputeJobLauncher launcher, CancellationToken ct)
     {
-        var states = await repository.GetCollectionAsync(item.Target.Collection, ct);
-        if (!states.TryGetValue(item.Target, out var current) || current.AttemptId != item.AttemptId ||
+        var current = await repository.GetTargetAsync(item.Target, ct);
+        if (current is null || current.AttemptId != item.AttemptId ||
             current.Outcome != "queued") return false;
         if (current.AttemptRevision != item.StaleRevision || current.InputManifestUri != item.InputManifestUri ||
             item.OutputPrefix != CollectionImportEngine.AttemptOutputPrefix(item.Target, item.AttemptId))

@@ -80,6 +80,239 @@ if (args.Length == 1 && args[0] == "--migrate-sql-compact-images")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--migrate-sql-operational")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for SQL migration.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+    await using var command = new Microsoft.Data.SqlClient.SqlCommand(SqlCatalogSchema.RenderOperationalState(schema), connection)
+    { CommandTimeout = 300 };
+    await command.ExecuteNonQueryAsync();
+    Console.WriteLine("Operational state schema is current.");
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--migrate-sql-image-work")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for SQL migration.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+    await using var command = new Microsoft.Data.SqlClient.SqlCommand(SqlCatalogSchema.RenderImageWork(schema), connection)
+    { CommandTimeout = 300 };
+    await command.ExecuteNonQueryAsync();
+    Console.WriteLine("Image work schema is current; all work kinds default to disabled.");
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--migrate-sql-image-adoption")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for SQL migration.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+    await using var command = new Microsoft.Data.SqlClient.SqlCommand(SqlCatalogSchema.RenderImageAdoption(schema), connection)
+    { CommandTimeout = 300 };
+    await command.ExecuteNonQueryAsync();
+    Console.WriteLine("Image adoption schema is current.");
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--migrate-sql-resize-batch")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for SQL migration.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+    await using var command = new Microsoft.Data.SqlClient.SqlCommand(SqlCatalogSchema.RenderResizeBatch(schema), connection)
+    { CommandTimeout = 300 };
+    await command.ExecuteNonQueryAsync();
+    Console.WriteLine("Resize batch schema is current.");
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--migrate-sql-source-generation")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for SQL migration.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+    await using var command = new Microsoft.Data.SqlClient.SqlCommand(SqlCatalogSchema.RenderSourceGeneration(schema), connection)
+    { CommandTimeout = 300 };
+    await command.ExecuteNonQueryAsync();
+    Console.WriteLine("Source generation schema is current.");
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--migrate-sql-pending-rendition-indexes")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for SQL migration.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+    await using var command = new Microsoft.Data.SqlClient.SqlCommand(
+        SqlCatalogSchema.RenderPendingRenditionIndexes(schema), connection) { CommandTimeout = 300 };
+    await command.ExecuteNonQueryAsync();
+    Console.WriteLine("Pending rendition indexes are current.");
+    return;
+}
+
+if (args.Length == 3 && args[0] == "--adopt-sql-images" && args[1] is "--verify-only" or "--apply"
+    && int.TryParse(args[2], out var adoptionLimit))
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for image adoption.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    var table = new TableServiceClient(new Uri(accountUrl.Replace(".blob.", ".table.",
+        StringComparison.OrdinalIgnoreCase)), credential).GetTableClient("CollectionTargets");
+    var adopter = new SqlImageAdopter(table, new SqlConnectionFactory(connectionString), schema,
+        new SqlImageBlobStore(blobService, credential));
+    for (var retry = 0; ; retry++)
+    {
+        try
+        {
+            Console.WriteLine(JsonSerializer.Serialize(await adopter.RunAsync(adoptionLimit,
+                args[1] == "--apply", CancellationToken.None)));
+            break;
+        }
+        catch (Exception error) when (retry < 19 && TransientAdoptionError(error))
+        {
+            var delay = TimeSpan.FromSeconds(Math.Min(60, 5 * (retry + 1)));
+            Console.Error.WriteLine($"Adoption request failed transiently ({error.GetBaseException().Message}); " +
+                $"resuming from the last checkpoint in {delay.TotalSeconds:0} seconds.");
+            await Task.Delay(delay);
+        }
+    }
+    return;
+}
+
+if (args.Length == 2 && args[0] == "--sql-resize-canary-manifest" && int.TryParse(args[1], out var canaryImageId))
+{
+    var batchId = Guid.NewGuid();
+    var path = await new SqlImageBlobStore(blobService, credential).WriteResizeManifestAsync(batchId,
+        [new ImageWorkClaim(canaryImageId, ImageWorkKind.Resize, 0, batchId, 1, "", "")],
+        CancellationToken.None);
+    Console.WriteLine(JsonSerializer.Serialize(new { batchId, manifest = path }));
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--sql-adoption-issues")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for adoption inspection.");
+    var schema = SqlCatalogSchema.ValidateName(Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog");
+    await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+    await using var command = new Microsoft.Data.SqlClient.SqlCommand($"""
+        SELECT TOP (30) PartitionName,LegacyRowKey,Reason,Title
+        FROM [{schema}].[ImageAdoptionIssue] ORDER BY NotedAt DESC
+        """, connection);
+    var issues = new List<object>();
+    await using var reader = await command.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) issues.Add(new { partition = reader.GetString(0), key = reader.GetString(1),
+        reason = reader.GetString(2), title = reader.IsDBNull(3) ? null : reader.GetString(3) });
+    Console.WriteLine(JsonSerializer.Serialize(issues));
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--reset-sql-image-adoption-checkpoints")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for adoption maintenance.");
+    var schema = SqlCatalogSchema.ValidateName(Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog");
+    await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+    await using var command = new Microsoft.Data.SqlClient.SqlCommand(
+        $"DELETE FROM [{schema}].[ImageAdoptionCheckpoint]", connection);
+    Console.WriteLine($"Cleared {await command.ExecuteNonQueryAsync()} image-adoption checkpoints; verified assets remain.");
+    return;
+}
+
+if (args.Length >= 1 && args[0] is "--sql-image-work-setting" or "--sql-enqueue-pending" or
+    "--sql-prioritize-ott" or "--sql-prioritize-image" or "--sql-mark-image-metadata-stale" or
+    "--sql-work-status")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for SQL image work.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    var work = new SqlImageWorkRepository(new SqlConnectionFactory(connectionString), schema);
+    if (args[0] == "--sql-image-work-setting")
+    {
+        if (args.Length == 2 && Enum.TryParse<ImageWorkKind>(args[1], true, out var selected))
+            Console.WriteLine(JsonSerializer.Serialize(await work.GetSettingAsync(selected, CancellationToken.None)));
+        else if (args.Length == 6 && Enum.TryParse<ImageWorkKind>(args[1], true, out selected) &&
+                 bool.TryParse(args[2], out var enabled) &&
+                 float.TryParse(args[3], System.Globalization.CultureInfo.InvariantCulture, out var minimum) &&
+                 byte.TryParse(args[4], out var concurrency) && int.TryParse(args[5], out var pacing))
+        {
+            await work.SetSettingAsync(new ImageWorkSetting(selected, enabled, minimum, concurrency, pacing),
+                CancellationToken.None);
+            Console.WriteLine(JsonSerializer.Serialize(await work.GetSettingAsync(selected, CancellationToken.None)));
+        }
+        else throw new ArgumentException("Usage: --sql-image-work-setting KIND [ENABLED MINIMUM CONCURRENCY PACING_MS]");
+    }
+    else if (args[0] == "--sql-work-status" && args.Length == 1)
+        Console.WriteLine(JsonSerializer.Serialize(new { settings = await Task.WhenAll(
+            work.GetSettingAsync(ImageWorkKind.Metadata, CancellationToken.None),
+            work.GetSettingAsync(ImageWorkKind.Copy, CancellationToken.None),
+            work.GetSettingAsync(ImageWorkKind.Resize, CancellationToken.None)),
+            queue = (await work.QueueCountsAsync(CancellationToken.None))
+                .Select(x => new { x.Kind, x.State, x.Count }),
+            resizeBatches = await work.ListOpenResizeBatchesAsync(CancellationToken.None) }));
+    else if (args[0] == "--sql-enqueue-pending" && args.Length == 3 &&
+             Enum.TryParse<ImageWorkKind>(args[1], true, out var kind) && int.TryParse(args[2], out var count))
+        Console.WriteLine(JsonSerializer.Serialize(new { kind, enqueued =
+            await work.FillPendingQueueAsync(kind, count, CancellationToken.None) }));
+    else if (args[0] == "--sql-prioritize-ott" && args.Length == 3 && int.TryParse(args[1], out var ott) &&
+             float.TryParse(args[2], System.Globalization.CultureInfo.InvariantCulture, out var priority))
+        Console.WriteLine(JsonSerializer.Serialize(new { ott, priority, images =
+            await work.SetSubtreePriorityAsync(ott, priority, CancellationToken.None) }));
+    else if (args[0] == "--sql-prioritize-image" && args.Length == 3 && int.TryParse(args[1], out var imageId) &&
+             float.TryParse(args[2], System.Globalization.CultureInfo.InvariantCulture, out var imagePriority))
+    {
+        await work.SetImagePriorityAsync(imageId, imagePriority, CancellationToken.None);
+        Console.WriteLine(JsonSerializer.Serialize(new { imageId, priority = imagePriority }));
+    }
+    else if (args[0] == "--sql-mark-image-metadata-stale" && args.Length == 2 &&
+             int.TryParse(args[1], out var staleImageId))
+    {
+        await work.MarkMetadataStaleAsync(staleImageId, CancellationToken.None);
+        Console.WriteLine(JsonSerializer.Serialize(new { imageId = staleImageId, metadataStale = true }));
+    }
+    else throw new ArgumentException("Invalid SQL image work command.");
+    return;
+}
+
+if (args.Length == 2 && args[0] == "--adopt-sql-targets" && args[1] is "--verify-only" or "--apply")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for target adoption.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    var source = new TableTargetRepository(new TableServiceClient(
+        new Uri(accountUrl.Replace(".blob.", ".table.", StringComparison.OrdinalIgnoreCase)), credential)
+        .GetTableClient("CollectionTargets"));
+    var target = new SqlTargetRepository(new SqlConnectionFactory(connectionString), schema);
+    var collection = October2026Collection.Collection;
+    var oldStates = await source.GetCollectionAsync(collection, CancellationToken.None);
+    var oldParallelism = await new TableCollectionSettingsRepository(new TableServiceClient(
+        new Uri(accountUrl.Replace(".blob.", ".table.", StringComparison.OrdinalIgnoreCase)), credential)
+        .GetTableClient("CollectionTargets")).GetParallelismAsync(collection, CancellationToken.None);
+    var settings = new SqlCollectionSettingsRepository(new SqlConnectionFactory(connectionString), schema);
+    if (args[1] == "--apply")
+    {
+        foreach (var state in oldStates.Values)
+            await target.ImportIfMissingAsync(state, CancellationToken.None);
+        await settings.SetParallelismAsync(collection, oldParallelism, CancellationToken.None);
+    }
+    var sqlStates = await target.GetCollectionAsync(collection, CancellationToken.None);
+    var missing = oldStates.Keys.Except(sqlStates.Keys).Select(x => x.ToString()).ToArray();
+    var mismatched = oldStates.Where(pair => sqlStates.TryGetValue(pair.Key, out var state) &&
+        JsonSerializer.Serialize(pair.Value) != JsonSerializer.Serialize(state)).Select(pair => pair.Key.ToString()).ToArray();
+    Console.WriteLine(JsonSerializer.Serialize(new { mode = args[1], source = oldStates.Count, sql = sqlStates.Count,
+        missing, mismatched, parallelism = await settings.GetParallelismAsync(collection, CancellationToken.None), oldParallelism }));
+    if (missing.Length > 0 || mismatched.Length > 0) Environment.ExitCode = 2;
+    return;
+}
+
 if (args.Length == 1 && args[0] == "--backfill-sql-renditions")
 {
     var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
@@ -239,8 +472,24 @@ var webShards = await new SourceManifestLoader(blobStore).LoadAsync(Cancellation
 builder.Services.AddSingleton<IReadOnlyList<ManifestShard>>(webShards);
 var webTableService = new TableServiceClient(new Uri(accountUrl.Replace(".blob.", ".table.", StringComparison.OrdinalIgnoreCase)), credential);
 builder.Services.AddSingleton(webTableService.GetTableClient("CollectionTargets"));
-builder.Services.AddSingleton<ITargetRepository, TableTargetRepository>();
-builder.Services.AddSingleton<ICollectionSettingsRepository, TableCollectionSettingsRepository>();
+var sqlOperational = builder.Configuration.GetValue<bool>("SqlOperational:Enabled");
+if (sqlOperational)
+{
+    var connectionString = builder.Configuration["SqlOperational:ConnectionString"]
+        ?? Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("SQL operational state enabled without a connection string.");
+    var schema = builder.Configuration["SqlOperational:Schema"] ?? "catalog";
+    builder.Services.AddSingleton(new SqlConnectionFactory(connectionString));
+    builder.Services.AddSingleton<ITargetRepository>(sp => new SqlTargetRepository(
+        sp.GetRequiredService<SqlConnectionFactory>(), schema));
+    builder.Services.AddSingleton<ICollectionSettingsRepository>(sp => new SqlCollectionSettingsRepository(
+        sp.GetRequiredService<SqlConnectionFactory>(), schema));
+}
+else
+{
+    builder.Services.AddSingleton<ITargetRepository, TableTargetRepository>();
+    builder.Services.AddSingleton<ICollectionSettingsRepository, TableCollectionSettingsRepository>();
+}
 builder.Services.AddSingleton<IOutputManifestReader, AzureOutputManifestReader>();
 builder.Services.AddSingleton<ImageCatalog>();
 builder.Services.AddSingleton<IImageCatalog>(sp => sp.GetRequiredService<ImageCatalog>());
@@ -262,9 +511,12 @@ builder.Services.AddSingleton<IThumbnailBatchManifestStore, AzureThumbnailBatchM
 builder.Services.AddSingleton<IImageInfoSnapshotStore, AzureImageInfoSnapshotStore>();
 builder.Services.AddSingleton<IImageInfoStore, ImageInfoStore>();
 builder.Services.AddSingleton<IResizeSweepRepository, TableResizeSweepRepository>();
-builder.Services.AddSingleton<ResizeSweepService>();
+var sqlImageWork = sqlOperational && builder.Configuration.GetValue<bool>("SqlOperational:ImageEnabled");
+builder.Services.AddSingleton(sp => new ResizeSweepService(
+    sp.GetRequiredService<IResizeSweepRepository>(), sp.GetRequiredService<IResizeJobLauncher>(),
+    sp.GetRequiredService<ILogger<ResizeSweepService>>(), !sqlImageWork));
 builder.Services.AddSingleton<IResizeSweepScheduler>(sp => sp.GetRequiredService<ResizeSweepService>());
-builder.Services.AddHostedService(sp => sp.GetRequiredService<ResizeSweepService>());
+if (!sqlImageWork) builder.Services.AddHostedService(sp => sp.GetRequiredService<ResizeSweepService>());
 builder.Services.AddSingleton<IThumbnailBlobCopier>(sp =>
 {
     var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
@@ -280,8 +532,24 @@ builder.Services.AddSingleton(sp => new ThumbnailImportService(
     sp.GetRequiredService<IImageCatalog>(),
     sp.GetRequiredService<IThumbnailBatchManifestStore>(),
     sp.GetRequiredService<IImageInfoStore>(),
-    sp.GetRequiredService<IResizeSweepScheduler>()));
-builder.Services.AddHostedService(sp => sp.GetRequiredService<ThumbnailImportService>());
+    sp.GetRequiredService<IResizeSweepScheduler>(), !sqlImageWork));
+if (!sqlImageWork) builder.Services.AddHostedService(sp => sp.GetRequiredService<ThumbnailImportService>());
+if (sqlImageWork)
+{
+    var schema = builder.Configuration["SqlOperational:Schema"] ?? "catalog";
+    builder.Services.AddSingleton(sp => new SqlImageWorkRepository(
+        sp.GetRequiredService<SqlConnectionFactory>(), schema));
+    builder.Services.AddSingleton(new SqlImageBlobStore(blobService, credential));
+    builder.Services.AddSingleton(sp =>
+    {
+        var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+        http.DefaultRequestHeaders.UserAgent.ParseAdd(copyUserAgent ??
+            "CreationalDataflow/1.0 (https://github.com/jtheisen/creational-2026-data)");
+        return new ThumbnailBlobCopier(http, blobService,
+            sp.GetRequiredService<WikimediaRequestPacer>(), "images");
+    });
+    builder.Services.AddHostedService<SqlImageWorkService>();
+}
 builder.Services.AddSingleton<IStreamingCopier>(sp =>
 {
     if (string.IsNullOrWhiteSpace(copyUserAgent))
@@ -303,6 +571,7 @@ if (!string.IsNullOrWhiteSpace(jobResourceId) && !string.IsNullOrWhiteSpace(jobI
     builder.Services.AddSingleton<IComputeJobLauncher>(sp => sp.GetRequiredService<ContainerAppsJobLauncher>());
     builder.Services.AddSingleton<IResizeJobLauncher>(sp => sp.GetRequiredService<ContainerAppsJobLauncher>());
     builder.Services.AddHostedService<QueueWorkDispatcher>();
+    if (sqlImageWork) builder.Services.AddHostedService<SqlResizeBatchDispatcher>();
 }
 else
 {
@@ -321,3 +590,11 @@ app.MapStaticAssets();
 app.UseAntiforgery();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 app.Run();
+
+static bool TransientAdoptionError(Exception error) => error switch
+{
+    Azure.RequestFailedException request => request.Status is 408 or 429 or 500 or 502 or 503 or 504,
+    Microsoft.Data.SqlClient.SqlException => true,
+    IOException or HttpRequestException or TimeoutException => true,
+    _ => error.InnerException is not null && TransientAdoptionError(error.InnerException)
+};

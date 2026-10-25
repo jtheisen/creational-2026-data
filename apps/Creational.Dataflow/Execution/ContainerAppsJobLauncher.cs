@@ -31,6 +31,10 @@ public sealed class ContainerAppsJobLauncher(HttpClient http, TokenCredential cr
     public Task<string> StartResizeAsync(string runId, CancellationToken cancellationToken)
         => StartCommandAsync(["python", "-m", "workers.resize"], ["--run-id", runId], cancellationToken);
 
+    public Task<string> StartSqlResizeAsync(string manifestPath, CancellationToken cancellationToken)
+        => StartCommandAsync(["python", "-m", "workers.resize"],
+            ["--sql-manifest", manifestPath], cancellationToken);
+
     private async Task<string> StartCommandAsync(string[] command, string[] args, CancellationToken cancellationToken)
     {
         var payload = new

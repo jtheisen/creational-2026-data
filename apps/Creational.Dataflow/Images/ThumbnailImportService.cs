@@ -11,7 +11,8 @@ public sealed class ThumbnailImportService(
     IImageCatalog? catalog = null,
     IThumbnailBatchManifestStore? manifests = null,
     IImageInfoStore? infoStore = null,
-    IResizeSweepScheduler? resizeScheduler = null) : BackgroundService
+    IResizeSweepScheduler? resizeScheduler = null,
+    bool allowLegacyWrites = true) : BackgroundService
 {
     private readonly SemaphoreSlim _wake = new(0, 1);
     private ThumbnailBatchActivity? _activity;
@@ -24,6 +25,7 @@ public sealed class ThumbnailImportService(
 
     public async Task<string> CreateJobAsync(IReadOnlyList<string> titles, CancellationToken ct)
     {
+        EnsureWritable();
         var job = ThumbnailImportJob.Create(titles, 250);
         await repository.AddJobAsync(job, ct);
         if (_wake.CurrentCount == 0) _wake.Release();
@@ -35,6 +37,7 @@ public sealed class ThumbnailImportService(
 
     public async Task<string> CreateBatchAsync(ImageSelection selection, int offset, int count, CancellationToken ct)
     {
+        EnsureWritable();
         var batch = ThumbnailImportBatch.Create(selection, offset, count);
         if (manifests is not null)
         {
@@ -66,6 +69,7 @@ public sealed class ThumbnailImportService(
 
     public async Task<string> CreateRunAsync(ImageSelection selection, CancellationToken ct)
     {
+        EnsureWritable();
         if (catalog is null || manifests is null)
             throw new InvalidOperationException("Image catalog and manifest storage are required for import runs.");
         var run = ThumbnailImportRun.Create(selection);
@@ -100,6 +104,7 @@ public sealed class ThumbnailImportService(
 
     public async Task ProcessJobAsync(string id, CancellationToken ct)
     {
+        EnsureWritable();
         var job = await repository.GetJobAsync(id, ct) ?? throw new ArgumentException("Image job was not found.", nameof(id));
         if (job.Status is not ("complete" or "complete-with-errors"))
             await RunJobAsync(job, ct);
@@ -111,6 +116,12 @@ public sealed class ThumbnailImportService(
         foreach (var title in job.Titles)
             rows.Add(await repository.GetRenditionAsync(title, job.Width, ct));
         return rows;
+    }
+
+    private void EnsureWritable()
+    {
+        if (!allowLegacyWrites)
+            throw new InvalidOperationException("Legacy image imports are read-only during the SQL cutover.");
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

@@ -42,8 +42,10 @@ public class QueueWorkDispatcherTests
     private sealed class FakeRepository(TargetState state) : ITargetRepository
     {
         public TargetState State { get; private set; } = state;
+        public Task<TargetState?> GetTargetAsync(TargetId id, CancellationToken ct) =>
+            Task.FromResult<TargetState?>(id == State.Id ? State : null);
         public Task<IReadOnlyDictionary<TargetId, TargetState>> GetCollectionAsync(string collection, CancellationToken ct) =>
-            Task.FromResult<IReadOnlyDictionary<TargetId, TargetState>>(new Dictionary<TargetId, TargetState> { [State.Id] = State });
+            throw new InvalidOperationException("Queue dispatch must use a point lookup");
         public Task<TargetState> MarkStaleAsync(TargetId id, string reason, CancellationToken ct) => throw new NotImplementedException();
         public Task<TargetState> BeginAttemptAsync(TargetId id, string attempt, long revision, CancellationToken ct)
         { State = State.BeginAttempt(attempt, revision); return Task.FromResult(State); }
