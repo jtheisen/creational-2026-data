@@ -17,11 +17,29 @@ rows and resumed successfully with 20,000-row batches.
 | Image | 400,545 | 137.2 |
 | PageImage | 478,479 | 195.2 |
 
-The data file has allocated **1,232 MiB** of the **2,048 MiB** Basic limit,
-leaving 816 MiB before that limit. Catalog tables reserve about 1,206 MiB.
+The data file has allocated **1,296 MiB** of the **2,048 MiB** Basic limit
+as checked on 2026-10-25, leaving 752 MiB before that limit. Catalog tables
+reserve about 1,206 MiB.
 `ImageRights`, `Rendition`, and operational job/attempt tables are still empty
 or not yet created. This establishes catalog fit, not complete migration fit.
 Article text, markup, Parquet, imageinfo JSON, and image bytes remain in Blob.
+
+`ImageRights` and `Rendition` have schema but no rows because this load only
+migrated the catalog and source image metadata. The existing license/attribution
+records and imported image variants have not yet been migrated from the live
+Table/Blob workflow. Zero rows here do not mean that no image rights or image
+files exist.
+
+## Potential taxon storage reduction
+
+`Taxon` is the largest table. After the operational migration, measure whether
+all of its stored columns and indexes are needed by the actual queries; some
+tree information may be derivable or represented more compactly. Also assess
+pre-curating the OTT input to exclude taxons that the product will never use.
+Any pruning must preserve ancestors and DFS ranges needed for subtree queries,
+and should be validated against page/image coverage before changing the
+currently loaded catalog. These are capacity options, not prerequisites for
+the first SQL cutover.
 
 All six source checkpoints completed. The catalog has 476,677 page/image
 references linked to global image IDs. Another 1,802 have a known file title
@@ -56,7 +74,7 @@ focusing an OTT branch; they do not need continuous recomputation. A rare
 Metazoa-wide preview can show a loading state for roughly 20 seconds on a
 repeat query. Global work counters are a separate operational-state query and
 do not require this subtree join. Caching broad subtree results can wait until
-observed usage justifies it. The 816 MiB headroom must still be checked against
+observed usage justifies it. The 752 MiB headroom must still be checked against
 rights, rendition, and operational tables before committing to Basic as the
 final tier. [The benchmark SQL](../apps/Creational.Dataflow/Sql/catalog_benchmark.sql)
 can be rerun for other roots.
