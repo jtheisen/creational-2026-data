@@ -75,7 +75,8 @@ public sealed class SqlCatalogSchemaTests
         finally
         {
             foreach (var table in new[] { "PageImage", "Rendition", "ImageRights", "TaxonPage",
-                "TaxonName", "Page", "Image", "Taxon", "Collection", "TaxonomyTree", "CatalogLoadCheckpoint" })
+                "TaxonName", "Page", "Image", "Taxon", "Collection", "TaxonomyTree", "CatalogLoadCheckpoint",
+                "RenditionShape", "LicenseCategory" })
             {
                 await using var dropTable = new SqlCommand($"IF OBJECT_ID(N'{schema}.{table}',N'U') IS NOT NULL DROP TABLE [{schema}].[{table}]", connection);
                 await dropTable.ExecuteNonQueryAsync();
@@ -227,6 +228,108 @@ public sealed class SqlCatalogSchemaTests
         }
     }
 
+    [Fact]
+    public async Task CompactImageMigrationAndRenditionBackfillAreRepeatable()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_TEST_CONNECTION_STRING");
+        if (string.IsNullOrWhiteSpace(connectionString)) return;
+        var schema = "ct_" + Guid.NewGuid().ToString("N")[..12];
+        await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+        await using (var create = new SqlCommand($"CREATE SCHEMA [{schema}]", connection))
+            await create.ExecuteNonQueryAsync();
+        try
+        {
+            await using (var old = new SqlCommand(SqlCatalogSchema.RenderLegacy(schema), connection))
+                await old.ExecuteNonQueryAsync();
+            await using (var images = new SqlCommand($"""
+                INSERT INTO [{schema}].Image(SourceWiki,CanonicalFileTitle,MetadataStatus)
+                VALUES ('commonswiki','File:Animal.jpg','commons'),
+                       ('commonswiki','File:Unsupported.svg','unsupported-media');
+                """, connection))
+                await images.ExecuteNonQueryAsync();
+
+            var migration = SqlCatalogSchema.RenderCompactImages(schema);
+            await using (var rights = new SqlCommand($"INSERT INTO [{schema}].ImageRights(ImageId) SELECT TOP 1 ImageId FROM [{schema}].Image", connection))
+                await rights.ExecuteNonQueryAsync();
+            await Assert.ThrowsAsync<SqlException>(async () =>
+            {
+                await using var blocked = new SqlCommand(migration, connection);
+                await blocked.ExecuteNonQueryAsync();
+            });
+            await using (var clear = new SqlCommand($"DELETE FROM [{schema}].ImageRights", connection))
+                await clear.ExecuteNonQueryAsync();
+            await using (var oldRendition = new SqlCommand($"INSERT INTO [{schema}].Rendition(ImageId,Variant,Status) SELECT TOP 1 ImageId,'w250','pending' FROM [{schema}].Image", connection))
+                await oldRendition.ExecuteNonQueryAsync();
+            await Assert.ThrowsAsync<SqlException>(async () =>
+            {
+                await using var blocked = new SqlCommand(migration, connection);
+                await blocked.ExecuteNonQueryAsync();
+            });
+            await using (var clear = new SqlCommand($"DELETE FROM [{schema}].Rendition", connection))
+                await clear.ExecuteNonQueryAsync();
+            await using (var migrate = new SqlCommand(migration, connection))
+                await migrate.ExecuteNonQueryAsync();
+            await using (var migrate = new SqlCommand(migration, connection))
+                await migrate.ExecuteNonQueryAsync();
+
+            await using (var alter = new SqlCommand($"UPDATE [{schema}].RenditionShape SET RecipeVersion='changed' WHERE ShapeId=2", connection))
+                await alter.ExecuteNonQueryAsync();
+            await Assert.ThrowsAsync<SqlException>(async () =>
+            {
+                await using var blocked = new SqlCommand(migration, connection);
+                await blocked.ExecuteNonQueryAsync();
+            });
+            await using (var restore = new SqlCommand($"UPDATE [{schema}].RenditionShape SET RecipeVersion='webp-from-w250-v1' WHERE ShapeId=2", connection))
+                await restore.ExecuteNonQueryAsync();
+
+            Assert.Equal(5, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].RenditionShape", connection, null));
+            Assert.Equal(6, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].LicenseCategory", connection, null));
+            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].RenditionShape WHERE ShapeId=1 AND PathKey='w250' AND SourceKind='wikimedia'", connection, null));
+            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].RenditionShape WHERE ShapeId=2 AND PathKey='w20' AND SourceKind='derived'", connection, null));
+            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].LicenseCategory WHERE LicenseCategoryId=6 AND Code='missing'", connection, null));
+            Assert.Equal("varchar", await TypeAsync(schema, "RenditionShape", "PathKey", connection, null));
+            Assert.Equal(2, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].Image WHERE LicenseCategoryId IS NULL", connection, null));
+
+            var loader = new SqlCatalogLoader(new SqlConnectionFactory(connectionString), schema);
+            Assert.Equal(10, await loader.EnsureRenditionsAsync(connection, 1, CancellationToken.None));
+            Assert.Equal(0, await loader.EnsureRenditionsAsync(connection, 1, CancellationToken.None));
+            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].Rendition r JOIN [{schema}].Image i ON i.ImageId=r.ImageId WHERE r.ShapeId=1 AND i.MetadataStatus='unsupported-media'", connection, null));
+            Assert.Equal(1, await ScalarAsync(SqlCatalogWorkQueries.EligibleSourceRenditionCount(schema), connection, null));
+
+            var animal = $"(SELECT ImageId FROM [{schema}].Image WHERE CanonicalFileTitle='File:Animal.jpg')";
+            await using (var suspend = new SqlCommand($"UPDATE [{schema}].Image SET Priority=-1 WHERE ImageId={animal}", connection))
+                await suspend.ExecuteNonQueryAsync();
+            Assert.Equal(0, await ScalarAsync(SqlCatalogWorkQueries.EligibleSourceRenditionCount(schema), connection, null));
+            await using (var resume = new SqlCommand($"UPDATE [{schema}].Image SET Priority=0 WHERE ImageId={animal}", connection))
+                await resume.ExecuteNonQueryAsync();
+            await using (var set = new SqlCommand($"UPDATE [{schema}].Rendition SET Complete=1,Bytes=123,Stale=1,Failed=1 WHERE ImageId={animal} AND ShapeId=1", connection))
+                await set.ExecuteNonQueryAsync();
+            Assert.Equal(0, await loader.EnsureRenditionsAsync(connection, 1, CancellationToken.None));
+            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].Rendition WHERE ImageId={animal} AND ShapeId=1 AND Complete=1 AND Stale=1 AND Failed=1 AND Bytes=123", connection, null));
+            await Assert.ThrowsAsync<SqlException>(async () =>
+            {
+                await using var invalid = new SqlCommand($"UPDATE [{schema}].Rendition SET Bytes=NULL WHERE ImageId={animal} AND ShapeId=1", connection);
+                await invalid.ExecuteNonQueryAsync();
+            });
+            await Assert.ThrowsAsync<SqlException>(async () =>
+            {
+                await using var invalid = new SqlCommand($"UPDATE [{schema}].Rendition SET Complete=0 WHERE ImageId={animal} AND ShapeId=1", connection);
+                await invalid.ExecuteNonQueryAsync();
+            });
+        }
+        finally
+        {
+            await using var drop = new SqlCommand($"""
+                DROP TABLE IF EXISTS [{schema}].[PageImage], [{schema}].[Rendition], [{schema}].[ImageRights],
+                    [{schema}].[TaxonPage], [{schema}].[TaxonName], [{schema}].[Page], [{schema}].[Image],
+                    [{schema}].[Taxon], [{schema}].[Collection], [{schema}].[TaxonomyTree],
+                    [{schema}].[CatalogLoadCheckpoint], [{schema}].[RenditionShape], [{schema}].[LicenseCategory];
+                DROP SCHEMA [{schema}];
+                """, connection);
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
     private static async Task ExecuteAsync(string sql, SqlConnection connection, SqlTransaction transaction)
     {
         await using var command = new SqlCommand(sql, connection, transaction) { CommandTimeout = 120 };
@@ -240,7 +343,7 @@ public sealed class SqlCatalogSchemaTests
     }
 
     private static async Task<string> TypeAsync(string schema, string table, string column,
-        SqlConnection connection, SqlTransaction transaction)
+        SqlConnection connection, SqlTransaction? transaction)
     {
         await using var command = new SqlCommand("""
             SELECT TYPE_NAME(c.user_type_id)

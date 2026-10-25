@@ -89,6 +89,7 @@ public sealed class SqlCatalogLoader(SqlConnectionFactory connections, string sc
         counts["Image"] = await LoadQueryAsync(sql, duck, "Image", $"Image:{collectionId}",
             inputs.ImageFingerprint, SqlCatalogQueries.Images(inputs.Root), batchSize,
             cancellationToken, imageTransform);
+        await EnsureRenditionsAsync(sql, batchSize, cancellationToken);
         counts["PageImage"] = await LoadQueryAsync(sql, duck, "PageImage", $"PageImage:{collectionId}",
             inputs.ReferenceFingerprint, SqlCatalogQueries.PageImages(inputs.Root, collectionId),
             batchSize, cancellationToken);
@@ -124,6 +125,48 @@ public sealed class SqlCatalogLoader(SqlConnectionFactory connections, string sc
                 throw new InvalidDataException($"{unlinked} resolved page images have no global image identity.");
         }
         return new(collectionId, treeId, counts, linked);
+    }
+
+    public async Task<long> EnsureRenditionsAsync(SqlConnection connection, int batchSize,
+        CancellationToken cancellationToken, Action<int, long>? progress = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
+        var afterImageId = 0;
+        long inserted = 0;
+        while (true)
+        {
+            await using var command = new SqlCommand($"""
+                DECLARE @nextImageId INT;
+                SELECT @nextImageId=MAX(ImageId) FROM (
+                    SELECT TOP (@batchSize) ImageId
+                    FROM [{_schema}].[Image]
+                    WHERE ImageId>@afterImageId
+                    ORDER BY ImageId
+                ) b;
+                IF @nextImageId IS NULL
+                BEGIN
+                    SELECT CAST(NULL AS INT) AS NextImageId, CAST(0 AS INT) AS Inserted;
+                    RETURN;
+                END;
+                INSERT INTO [{_schema}].[Rendition](ImageId,ShapeId)
+                SELECT i.ImageId,s.ShapeId
+                FROM [{_schema}].[Image] i CROSS JOIN [{_schema}].[RenditionShape] s
+                WHERE i.ImageId>@afterImageId AND i.ImageId<=@nextImageId
+                  AND NOT EXISTS (
+                      SELECT 1 FROM [{_schema}].[Rendition] r WITH (UPDLOCK,HOLDLOCK)
+                      WHERE r.ImageId=i.ImageId AND r.ShapeId=s.ShapeId);
+                SELECT @nextImageId AS NextImageId, @@ROWCOUNT AS Inserted;
+                """, connection) { CommandTimeout = 180 };
+            command.Parameters.Add("@batchSize", SqlDbType.Int).Value = batchSize;
+            command.Parameters.Add("@afterImageId", SqlDbType.Int).Value = afterImageId;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            await reader.ReadAsync(cancellationToken);
+            if (reader.IsDBNull(0)) break;
+            afterImageId = reader.GetInt32(0);
+            inserted += reader.GetInt32(1);
+            progress?.Invoke(afterImageId, inserted);
+        }
+        return inserted;
     }
 
     private async Task<long> LoadQueryAsync(SqlConnection sql, DuckDBConnection duck, string table,

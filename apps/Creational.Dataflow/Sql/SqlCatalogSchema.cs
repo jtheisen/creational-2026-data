@@ -24,6 +24,9 @@ public static partial class SqlCatalogSchema
     public static string RenderPageCompression(string schema)
         => RenderResource(schema, "004_page_compression.sql");
 
+    public static string RenderCompactImages(string schema)
+        => RenderResource(schema, "005_compact_images.sql");
+
     public static IReadOnlyList<string> RenderPageCompressionSteps(string schema)
         => RenderPageCompression(schema).ReplaceLineEndings("\n")
             .Split("\n\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

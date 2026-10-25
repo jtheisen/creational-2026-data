@@ -70,22 +70,45 @@ CREATE TABLE [__SCHEMA__].[Image] (
     UploadedAt DATETIME2(0) NULL,
     Mime VARCHAR(128) NULL,
     MediaType VARCHAR(32) NULL,
+    LicenseCategoryId TINYINT NULL,
     CONSTRAINT PK_Image PRIMARY KEY CLUSTERED (ImageId),
     CONSTRAINT CK_Image_OriginalBytes CHECK (OriginalBytes IS NULL OR OriginalBytes >= 0),
     CONSTRAINT UQ_Image_SourceTitle UNIQUE (SourceWiki, CanonicalFileTitle)
 );
 
-CREATE TABLE [__SCHEMA__].[ImageRights] (
-    ImageId INT NOT NULL,
-    LicenseShortName VARCHAR(384) NULL,
-    LicenseUrl VARCHAR(1024) NULL,
-    Attribution VARCHAR(6144) NULL,
-    MissingRights BIT NOT NULL CONSTRAINT DF_ImageRights_MissingRights DEFAULT (0),
-    RawImageInfoPath VARCHAR(512) NULL,
-    FetchedAt DATETIME2(0) NULL,
-    CONSTRAINT PK_ImageRights PRIMARY KEY CLUSTERED (ImageId),
-    CONSTRAINT FK_ImageRights_Image FOREIGN KEY (ImageId) REFERENCES [__SCHEMA__].[Image](ImageId)
+CREATE TABLE [__SCHEMA__].[LicenseCategory] (
+    LicenseCategoryId TINYINT NOT NULL,
+    Code VARCHAR(32) NOT NULL,
+    DisplayName VARCHAR(64) NOT NULL,
+    CONSTRAINT PK_LicenseCategory PRIMARY KEY CLUSTERED (LicenseCategoryId),
+    CONSTRAINT UQ_LicenseCategory_Code UNIQUE (Code)
 );
+INSERT INTO [__SCHEMA__].[LicenseCategory](LicenseCategoryId,Code,DisplayName)
+VALUES (1,'cc-by','CC BY'),(2,'cc-by-sa','CC BY-SA'),(3,'cc0','CC0'),
+       (4,'public-domain','Public domain'),(5,'other','Other reported license'),
+       (6,'missing','No license reported');
+ALTER TABLE [__SCHEMA__].[Image]
+    ADD CONSTRAINT FK_Image_LicenseCategory FOREIGN KEY (LicenseCategoryId)
+        REFERENCES [__SCHEMA__].[LicenseCategory](LicenseCategoryId);
+
+CREATE TABLE [__SCHEMA__].[RenditionShape] (
+    ShapeId TINYINT NOT NULL,
+    PathKey VARCHAR(8) NOT NULL,
+    Width SMALLINT NOT NULL,
+    OutputFormat VARCHAR(16) NOT NULL,
+    SourceKind VARCHAR(16) NOT NULL,
+    RecipeVersion VARCHAR(64) NOT NULL,
+    CONSTRAINT PK_RenditionShape PRIMARY KEY CLUSTERED (ShapeId),
+    CONSTRAINT UQ_RenditionShape_PathKey UNIQUE (PathKey),
+    CONSTRAINT CK_RenditionShape_Width CHECK (Width>0)
+);
+INSERT INTO [__SCHEMA__].[RenditionShape]
+    (ShapeId,PathKey,Width,OutputFormat,SourceKind,RecipeVersion)
+VALUES (1,'w250',250,'source','wikimedia','wikimedia-w250-v1'),
+       (2,'w20',20,'webp','derived','webp-from-w250-v1'),
+       (3,'w40',40,'webp','derived','webp-from-w250-v1'),
+       (4,'w60',60,'webp','derived','webp-from-w250-v1'),
+       (5,'w120',120,'webp','derived','webp-from-w250-v1');
 
 CREATE TABLE [__SCHEMA__].[PageImage] (
     CollectionId SMALLINT NOT NULL,
@@ -105,19 +128,18 @@ CREATE INDEX IX_PageImage_Unlinked ON [__SCHEMA__].[PageImage](CollectionId, Pag
 
 CREATE TABLE [__SCHEMA__].[Rendition] (
     ImageId INT NOT NULL,
-    Variant VARCHAR(16) NOT NULL,
-    Status VARCHAR(24) NOT NULL,
+    ShapeId TINYINT NOT NULL,
+    Bytes INT NULL,
+    Complete BIT NOT NULL CONSTRAINT DF_Rendition_Complete DEFAULT (0),
     Stale BIT NOT NULL CONSTRAINT DF_Rendition_Stale DEFAULT (0),
-    Bytes BIGINT NULL,
-    Sha256 BINARY(32) NULL,
-    SourceSha256 BINARY(32) NULL,
-    RecipeVersion VARCHAR(64) NULL,
-    LastError VARCHAR(3072) NULL,
-    UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_Rendition_UpdatedAt DEFAULT (SYSUTCDATETIME()),
-    CONSTRAINT PK_Rendition PRIMARY KEY CLUSTERED (ImageId, Variant),
+    Failed BIT NOT NULL CONSTRAINT DF_Rendition_Failed DEFAULT (0),
+    CONSTRAINT PK_Rendition PRIMARY KEY CLUSTERED (ImageId, ShapeId),
     CONSTRAINT FK_Rendition_Image FOREIGN KEY (ImageId) REFERENCES [__SCHEMA__].[Image](ImageId),
-    CONSTRAINT CK_Rendition_Bytes CHECK (Bytes IS NULL OR Bytes >= 0)
+    CONSTRAINT FK_Rendition_Shape FOREIGN KEY (ShapeId) REFERENCES [__SCHEMA__].[RenditionShape](ShapeId),
+    CONSTRAINT CK_Rendition_Bytes CHECK (
+        (Complete=0 AND Bytes IS NULL) OR (Complete=1 AND Bytes IS NOT NULL AND Bytes>=0))
 );
+CREATE INDEX IX_Rendition_Work ON [__SCHEMA__].[Rendition](ShapeId,Complete,Stale,ImageId);
 
 CREATE TABLE [__SCHEMA__].[CatalogLoadCheckpoint] (
     LoadKey VARCHAR(768) NOT NULL,

@@ -6,7 +6,7 @@ enwiki 2026-10-01 and OTT 3.3 catalog into schema `catalog` using `SqlBulkCopy`
 and transactional source checkpoints. A run was stopped after 270,000 taxon
 rows and resumed successfully with 20,000-row batches.
 
-## Loaded rows and storage
+## Initial loaded rows and storage
 
 | Table | Rows | Reserved MiB, including indexes |
 |---|---:|---:|
@@ -17,20 +17,19 @@ rows and resumed successfully with 20,000-row batches.
 | Image | 400,545 | 137.2 |
 | PageImage | 478,479 | 195.2 |
 
-The data file has allocated **1,296 MiB** of the **2,048 MiB** Basic limit
-as checked on 2026-10-25, leaving 752 MiB before that limit. Catalog tables
-reserve about 1,206 MiB.
-`ImageRights`, `Rendition`, and operational job/attempt tables are still empty
-or not yet created. This establishes catalog fit, not complete migration fit.
+At the initial load, the data file allocated **1,296 MiB** of the **2,048 MiB**
+Basic limit, leaving 752 MiB before that limit. Catalog tables reserved about
+1,206 MiB. The old `ImageRights` and `Rendition` tables were empty; the compact
+replacement and its current size are documented below. Operational job and
+attempt tables are not yet created. This establishes catalog fit, not complete
+migration fit.
 Article text, markup, Parquet, imageinfo JSON, and image bytes remain in Blob.
-The planned compact replacement for the empty rights and rendition tables is
-described in the [image metadata design](superpowers/specs/2026-10-25-compact-image-metadata-design.md).
+The compact replacement is described in the
+[image metadata design](superpowers/specs/2026-10-25-compact-image-metadata-design.md).
 
-`ImageRights` and `Rendition` have schema but no rows because this load only
-migrated the catalog and source image metadata. The existing license/attribution
-records and imported image variants have not yet been migrated from the live
-Table/Blob workflow. Zero rows here do not mean that no image rights or image
-files exist.
+The existing license/attribution records and imported image variants have not
+yet been migrated from the live Table/Blob workflow. The initial zero SQL rows
+did not mean that no image rights or image files existed.
 
 ## Potential storage reductions
 
@@ -87,8 +86,8 @@ unchanged. The Metazoa staged subtree query returned 320,503 pages and 242,696
 images in 21.1 seconds on its first S1 pass and 10.5 seconds on the repeat;
 these are not comparable to the earlier Basic timings as a compression-only
 benchmark. The SQL data file still allocates 1,680 MiB despite the lower table
-reservations, so free allocated pages may need reclamation before Basic offers
-the expected headroom. Its configured maximum is currently 5 GiB on S1.
+reservations, so allocated-file headroom is smaller than reserved-table
+headroom. Its maximum was temporarily raised to 5 GiB on S1 for the rebuild.
 
 The database collation is `Latin1_General_100_CI_AS_SC_UTF8`. All current SQL
 text columns now use `VARCHAR` with UTF-8 collation. Canonical image-title
@@ -112,6 +111,32 @@ markup references without a file title. Validation found zero missing or
 incorrect taxon/page DFS positions and zero unlinked references with a known
 source wiki. The sum of recorded original image sizes is 901,014,677,035
 bytes; this is source metadata, not bytes copied to the new `images` container.
+
+## Compact image metadata migration
+
+The legacy `ImageRights` and `Rendition` SQL tables were empty, so they were
+replaced without moving any Table/Blob image state. The new lookup tables have
+six license categories and five immutable shapes: `w250`, `w20`, `w40`, `w60`,
+and `w120`. Every one of the 400,545 catalog images now has five pending
+rendition rows. The backfill inserted **2,002,725 rows** in 1,000-image
+batches; a repeat inserted zero rows. No missing image/shape pairs or
+nonpending rows were found. All 400,545 license category IDs are null because
+existing imageinfo state has not been migrated to SQL.
+
+A representative isolated sample of 40,054 images and 200,270 renditions used
+9.1 MiB for the rendition table and its work index. Creating the rows took
+14.0 seconds on S1; counting eligible source images took 3.0 seconds, compared
+with 5.1 seconds without the work index. On the full live catalog, `Rendition`
+reserves **139.8 MiB** and the eligible `w250` count is 397,436, measured in
+3.3 seconds on S1. The database was returned to **Basic** with a 2 GiB maximum;
+the data file remains **1,680 MiB** allocated, leaving 368 MiB before any
+growth. On Basic, the eligible `w250` count took 7.5 seconds and a full scan
+for nonpending flags took 31.9 seconds. A combined validation query with
+multiple full scans timed out after 120 seconds while Basic's data I/O metric
+was near 100%. Future dashboard aggregates should use selective indexes or
+stored counters rather than repeated catalog-wide scans. This capacity includes
+only pending SQL rendition state; existing imported thumbnail bytes and
+imageinfo snapshots remain in Blob/Table storage until a later cutover.
 
 ## Subtree benchmark
 
@@ -138,9 +163,9 @@ focusing an OTT branch; they do not need continuous recomputation. A rare
 Metazoa-wide preview can show a loading state for roughly 20 seconds on a
 repeat query. Global work counters are a separate operational-state query and
 do not require this subtree join. Caching broad subtree results can wait until
-observed usage justifies it. The 752 MiB headroom must still be checked against
-rights, rendition, and operational tables before committing to Basic as the
-final tier. [The benchmark SQL](../apps/Creational.Dataflow/Sql/catalog_benchmark.sql)
+observed usage justifies it. The current 368 MiB allocated-file headroom must
+still be checked against operational tables before treating Basic as the
+steady-state tier. [The benchmark SQL](../apps/Creational.Dataflow/Sql/catalog_benchmark.sql)
 can be rerun for other roots.
 
 ## Deployment state and next work

@@ -67,6 +67,36 @@ if (args.Length == 1 && args[0] == "--migrate-sql-page-compression")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--migrate-sql-compact-images")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for SQL migration.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+    await using var command = new Microsoft.Data.SqlClient.SqlCommand(SqlCatalogSchema.RenderCompactImages(schema), connection)
+    { CommandTimeout = 300 };
+    await command.ExecuteNonQueryAsync();
+    Console.WriteLine("Compact image schema is current.");
+    return;
+}
+
+if (args.Length == 1 && args[0] == "--backfill-sql-renditions")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for SQL backfill.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+    var loader = new SqlCatalogLoader(new SqlConnectionFactory(connectionString), schema);
+    var inserted = await loader.EnsureRenditionsAsync(connection, 1_000, CancellationToken.None,
+        (imageId, rows) =>
+        {
+            if (imageId % 20_000 < 1_000)
+                Console.Error.WriteLine($"Rendition backfill reached ImageId {imageId}, inserted {rows} rows.");
+        });
+    Console.WriteLine($"Inserted {inserted} missing rendition rows.");
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--sql-estimate-page" && int.TryParse(args[2], out var indexId))
 {
     var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
