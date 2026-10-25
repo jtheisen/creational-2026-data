@@ -34,6 +34,24 @@ files exist.
 
 ## Potential storage reductions
 
+The 2026-10-25 SQL preflight confirmed all populated catalog indexes are
+uncompressed and the data file is 1,296 MiB of the 2,048 MiB Basic maximum.
+Full UTF-8 conversion scans of the largest text columns timed out on Basic, so
+the migration uses byte limits that safely accommodate every value allowed by
+the existing `NVARCHAR` declarations. These include `TaxonName.Name` at
+`VARCHAR(3072)` and page/image titles at `VARCHAR(1536)`. Those are maximum
+lengths, not allocated bytes per row. Small-table values were scanned exactly.
+
+Before changing the column types, `sys.sp_estimate_data_compression_savings`
+gave these sampled `PAGE` estimates. Re-estimate after UTF-8 conversion and
+verify actual size and query performance after each rebuild.
+
+| Index | Current used MiB | Estimated PAGE MiB |
+|---|---:|---:|
+| `TaxonName.PK_TaxonName` | 219.3 | 119.2 |
+| `Page.IX_Page_Title` | 57.9 | 31.4 |
+| `Image.UQ_Image_SourceTitle` | 51.0 | 21.7 |
+
 No catalog table or index currently uses SQL data compression; the live
 partitions all report `DATA_COMPRESSION = NONE`. Benchmark `PAGE` compression
 for text-bearing tables, especially `TaxonName`, and then `Page`, `Image`, and

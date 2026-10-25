@@ -8,6 +8,35 @@ namespace Creational.Dataflow.Tests;
 public sealed class SqlCatalogSchemaTests
 {
     [Fact]
+    public async Task CapacityPreflightMeasuresUtf8BytesOfUnicodeText()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_TEST_CONNECTION_STRING");
+        if (string.IsNullOrWhiteSpace(connectionString)) return;
+        var schema = "ct_" + Guid.NewGuid().ToString("N")[..12];
+        await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+        await using (var create = new SqlCommand($"CREATE SCHEMA [{schema}]", connection))
+            await create.ExecuteNonQueryAsync();
+        try
+        {
+            await using (var create = new SqlCommand($"CREATE TABLE [{schema}].[Samples](Name NVARCHAR(20) NOT NULL)", connection))
+                await create.ExecuteNonQueryAsync();
+            await using (var insert = new SqlCommand($"INSERT INTO [{schema}].[Samples](Name) VALUES (N'cat'),(N'é'),(N'中'),(N'𐀀')", connection))
+                await insert.ExecuteNonQueryAsync();
+
+            var result = await SqlCatalogCapacity.ReadAsync(connection, schema, CancellationToken.None);
+            var name = result.TextColumns.Single(x => x.Table == "Samples" && x.Column == "Name");
+            Assert.Equal(4, name.MaxUtf8Bytes);
+            Assert.Equal(60, name.SafeUtf8Bytes);
+            Assert.Equal(4, result.Tables.Single(x => x.Name == "Samples").Rows);
+        }
+        finally
+        {
+            await using var drop = new SqlCommand($"DROP TABLE IF EXISTS [{schema}].[Samples]; DROP SCHEMA [{schema}]", connection);
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
     public async Task BulkCheckpointCommitsRowsOnceAndRejectsChangedInputs()
     {
         var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_TEST_CONNECTION_STRING");

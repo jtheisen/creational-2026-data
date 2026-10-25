@@ -20,6 +20,28 @@ var credential = new DefaultAzureCredential();
 var blobService = new BlobServiceClient(new Uri(accountUrl), credential);
 var blobStore = new AzureBlobStore(blobService);
 
+if (args.Length == 1 && args[0] == "--sql-capacity")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for SQL capacity inspection.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+    Console.WriteLine(JsonSerializer.Serialize(await SqlCatalogCapacity.ReadAsync(connection, schema,
+        CancellationToken.None, message => Console.Error.WriteLine(message))));
+    return;
+}
+
+if (args.Length == 3 && args[0] == "--sql-estimate-page" && int.TryParse(args[2], out var indexId))
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for SQL compression estimates.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+    Console.WriteLine(JsonSerializer.Serialize(await SqlCatalogCapacity.EstimatePageAsync(connection, schema,
+        args[1], indexId, CancellationToken.None)));
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--build-ott-edges")
 {
     await OttEdges.BuildAsync(args[1], args[2], CancellationToken.None);
