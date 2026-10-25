@@ -274,6 +274,31 @@ public sealed class SqlImageWorkRepository(SqlConnectionFactory factory, string 
         await command.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task MarkSourceStaleAsync(int imageId, CancellationToken ct)
+    {
+        await using var connection = await factory.OpenAsync(ct);
+        await using var command = new SqlCommand($"""
+            SET XACT_ABORT ON;
+            BEGIN TRANSACTION;
+            IF EXISTS (SELECT 1 FROM {Table("ImageWorkQueue")} WITH (UPDLOCK,HOLDLOCK)
+                       WHERE ImageId=@image AND Kind=2 AND State=2)
+                THROW 51011, 'Source copy is already active; retry marking stale after it finishes', 1;
+            UPDATE {Table("Rendition")} SET Stale=1 WHERE ImageId=@image AND ShapeId=1 AND Complete=1;
+            IF @@ROWCOUNT<>1 THROW 51012, 'A complete source rendition was not found', 1;
+            UPDATE {Table("ImageWorkQueue")} SET State=0,DueAt=SYSUTCDATETIME(),LastError=NULL
+            WHERE ImageId=@image AND Kind=2 AND State=3;
+            IF NOT EXISTS (SELECT 1 FROM {Table("ImageWorkQueue")} WHERE ImageId=@image AND Kind=2)
+                INSERT INTO {Table("ImageWorkQueue")}(ImageId,Kind,Priority,AttemptNumber)
+                SELECT i.ImageId,2,i.Priority,
+                    COALESCE((SELECT MAX(a.AttemptNumber) FROM {Table("ImageWorkAttempt")} a
+                              WHERE a.ImageId=i.ImageId AND a.Kind=2),0)
+                FROM {Table("Image")} i WHERE i.ImageId=@image;
+            COMMIT TRANSACTION;
+            """, connection);
+        command.Parameters.Add("@image", SqlDbType.Int).Value = imageId;
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
     public async Task<IReadOnlyList<ImageWorkClaim>> ClaimAsync(ImageWorkKind kind, int limit,
         TimeSpan lease, CancellationToken ct)
     {

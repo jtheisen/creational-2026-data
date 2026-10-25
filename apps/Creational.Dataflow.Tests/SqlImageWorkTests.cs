@@ -137,16 +137,12 @@ public sealed class SqlImageWorkTests
                 TimeSpan.FromMinutes(5), CancellationToken.None));
             Assert.Equal(id, claim.ImageId);
             Assert.True(await repository.CompleteRenditionAsync(claim, 1, 123, CancellationToken.None));
-            await using var connection = await factory.OpenAsync(CancellationToken.None);
-            await using var stale = new SqlCommand("""
-                UPDATE catalog.Rendition SET Stale=1 WHERE ImageId=@id AND ShapeId=1;
-                """, connection);
-            stale.Parameters.Add("@id", SqlDbType.Int).Value = id;
-            await stale.ExecuteNonQueryAsync();
-            Assert.Equal(1, await repository.FillPendingQueueAsync(ImageWorkKind.Copy, 1, CancellationToken.None));
+            await repository.MarkSourceStaleAsync(id, CancellationToken.None);
+            Assert.Equal(0, await repository.FillPendingQueueAsync(ImageWorkKind.Copy, 1, CancellationToken.None));
             var retry = Assert.Single(await repository.ClaimAsync(ImageWorkKind.Copy, 1,
                 TimeSpan.FromMinutes(5), CancellationToken.None));
             Assert.Equal(2, retry.AttemptNumber);
+            await Assert.ThrowsAsync<SqlException>(() => repository.MarkSourceStaleAsync(id, CancellationToken.None));
         }
         finally
         {

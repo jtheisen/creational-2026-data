@@ -242,6 +242,7 @@ if (args.Length == 1 && args[0] == "--reset-sql-image-adoption-checkpoints")
 
 if (args.Length >= 1 && args[0] is "--sql-image-work-setting" or "--sql-enqueue-pending" or
     "--sql-prioritize-ott" or "--sql-prioritize-image" or "--sql-mark-image-metadata-stale" or
+    "--sql-mark-image-source-stale" or
     "--sql-work-status")
 {
     var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
@@ -290,6 +291,12 @@ if (args.Length >= 1 && args[0] is "--sql-image-work-setting" or "--sql-enqueue-
     {
         await work.MarkMetadataStaleAsync(staleImageId, CancellationToken.None);
         Console.WriteLine(JsonSerializer.Serialize(new { imageId = staleImageId, metadataStale = true }));
+    }
+    else if (args[0] == "--sql-mark-image-source-stale" && args.Length == 2 &&
+             int.TryParse(args[1], out var staleSourceId))
+    {
+        await work.MarkSourceStaleAsync(staleSourceId, CancellationToken.None);
+        Console.WriteLine(JsonSerializer.Serialize(new { imageId = staleSourceId, sourceStale = true }));
     }
     else throw new ArgumentException("Invalid SQL image work command.");
     return;

@@ -60,6 +60,8 @@ images. Existing queue priorities change in the same SQL operation.
 `--sql-mark-image-metadata-stale ID` schedules a metadata refresh and reopens
 a blocked metadata item. Changing an image's priority also reopens its blocked
 items for an explicit retry.
+`--sql-mark-image-source-stale ID` queues one verified source rendition for
+replacement and rejects the request while its copy lease is active.
 
 New metadata results enqueue source copies, and verified source copies enqueue
 one resize item per image. The enabled copy and resize dispatchers also find
