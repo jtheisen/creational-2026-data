@@ -30,7 +30,14 @@ records and imported image variants have not yet been migrated from the live
 Table/Blob workflow. Zero rows here do not mean that no image rights or image
 files exist.
 
-## Potential taxon storage reduction
+## Potential storage reductions
+
+No catalog table or index currently uses SQL data compression; the live
+partitions all report `DATA_COMPRESSION = NONE`. Benchmark `PAGE` compression
+for text-bearing tables, especially `TaxonName`, and then `Page`, `Image`, and
+`PageImage` as appropriate. Measure reserved space, rebuild time, and query and
+write performance before applying it to the live Basic database. Indexes need
+to be assessed separately from their tables.
 
 `Taxon` is the largest table. After the operational migration, measure whether
 all of its stored columns and indexes are needed by the actual queries; some
