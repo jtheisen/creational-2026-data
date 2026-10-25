@@ -45,6 +45,9 @@ public static partial class SqlCatalogSchema
     public static string RenderPendingRenditionIndexes(string schema)
         => RenderResource(schema, "011_pending_rendition_indexes.sql");
 
+    public static string RenderFocusedImagePriority(string schema)
+        => RenderResource(schema, "012_focused_image_priority.sql");
+
     public static string RenderImageBatchTable() => """
         CREATE TABLE #CatalogImageBatch (
             SourceWiki VARCHAR(16) NOT NULL,

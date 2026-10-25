@@ -137,9 +137,32 @@ public sealed class SqlImageWorkRepository(SqlConnectionFactory factory, string 
             JOIN {Table("Rendition")} source ON source.ImageId=i.ImageId AND source.ShapeId=1
             WHERE source.Complete=1 AND source.Stale=0
             """;
+        var focused = kind == ImageWorkKind.Copy ? $"""
+            FROM {Table("Image")} i WITH (INDEX(IX_Image_Priority))
+            JOIN {Table("Rendition")} source ON source.ImageId=i.ImageId AND source.ShapeId=1
+            WHERE i.ImageInfoState=1 AND (source.Complete=0 OR source.Stale=1)
+            """ : $"""
+            FROM {Table("Image")} i WITH (INDEX(IX_Image_Priority))
+            JOIN {Table("Rendition")} source ON source.ImageId=i.ImageId AND source.ShapeId=1
+            WHERE source.Complete=1 AND source.Stale=0
+              AND EXISTS (SELECT 1 FROM {Table("Rendition")} child
+                          WHERE child.ImageId=i.ImageId AND child.ShapeId IN (2,3,4,5)
+                            AND (child.Complete=0 OR child.Stale=1))
+            """;
+        string InsertFrom(string source) => $"""
+            INSERT INTO {Table("ImageWorkQueue")}(ImageId,Kind,Priority,AttemptNumber)
+            SELECT TOP (@limit) i.ImageId,@kind,i.Priority,
+                COALESCE((SELECT MAX(a.AttemptNumber) FROM {Table("ImageWorkAttempt")} a
+                          WHERE a.ImageId=i.ImageId AND a.Kind=@kind),0)
+            {source} AND i.Priority>=@minimum
+              AND NOT EXISTS (SELECT 1 FROM {Table("ImageWorkQueue")} q WITH (UPDLOCK,HOLDLOCK)
+                              WHERE q.ImageId=i.ImageId AND q.Kind=@kind)
+            ORDER BY i.Priority DESC,i.ImageId;
+            SET @inserted=@@ROWCOUNT;
+            """;
         await using var connection = await factory.OpenAsync(ct);
         await using var command = new SqlCommand($"""
-            DECLARE @minimum REAL,@capacity INT,@outstanding INT;
+            DECLARE @minimum REAL,@capacity INT,@outstanding INT,@inserted INT=0;
             SELECT @minimum=MinimumPriority,
                 @capacity=CASE WHEN Concurrency*4>20 THEN Concurrency*4 ELSE 20 END
             FROM {Table("ImageWorkSetting")} WHERE Kind=@kind;
@@ -148,15 +171,15 @@ public sealed class SqlImageWorkRepository(SqlConnectionFactory factory, string 
             SET @limit=CASE WHEN @outstanding>=@capacity THEN 0
                 WHEN @limit>@capacity-@outstanding THEN @capacity-@outstanding ELSE @limit END;
             IF @limit=0 BEGIN SELECT 0; RETURN; END;
-            INSERT INTO {Table("ImageWorkQueue")}(ImageId,Kind,Priority,AttemptNumber)
-            SELECT TOP (@limit) i.ImageId,@kind,i.Priority,
-                COALESCE((SELECT MAX(a.AttemptNumber) FROM {Table("ImageWorkAttempt")} a
-                          WHERE a.ImageId=i.ImageId AND a.Kind=@kind),0)
-            {candidates} AND i.Priority>=@minimum
-              AND NOT EXISTS (SELECT 1 FROM {Table("ImageWorkQueue")} q WITH (UPDLOCK,HOLDLOCK)
-                              WHERE q.ImageId=i.ImageId AND q.Kind=@kind)
-            ORDER BY i.Priority DESC,i.ImageId;
-            SELECT @@ROWCOUNT;
+            IF @minimum>0
+            BEGIN
+                {InsertFrom(focused)}
+            END
+            ELSE
+            BEGIN
+                {InsertFrom(candidates)}
+            END;
+            SELECT @inserted;
             """, connection) { CommandTimeout = 120 };
         command.Parameters.Add("@kind", SqlDbType.TinyInt).Value = (byte)kind;
         command.Parameters.Add("@limit", SqlDbType.Int).Value = limit;

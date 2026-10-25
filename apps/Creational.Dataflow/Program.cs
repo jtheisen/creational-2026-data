@@ -158,6 +158,19 @@ if (args.Length == 1 && args[0] == "--migrate-sql-pending-rendition-indexes")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--migrate-sql-focused-image-priority")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for SQL migration.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+    await using var command = new Microsoft.Data.SqlClient.SqlCommand(
+        SqlCatalogSchema.RenderFocusedImagePriority(schema), connection) { CommandTimeout = 300 };
+    await command.ExecuteNonQueryAsync();
+    Console.WriteLine("Focused image priority index is current.");
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--adopt-sql-images" && args[1] is "--verify-only" or "--apply"
     && int.TryParse(args[2], out var adoptionLimit))
 {

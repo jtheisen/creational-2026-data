@@ -18,6 +18,7 @@ dotnet run --project apps/Creational.Dataflow -- --migrate-sql-image-adoption
 dotnet run --project apps/Creational.Dataflow -- --migrate-sql-resize-batch
 dotnet run --project apps/Creational.Dataflow -- --migrate-sql-source-generation
 dotnet run --project apps/Creational.Dataflow -- --migrate-sql-pending-rendition-indexes
+dotnet run --project apps/Creational.Dataflow -- --migrate-sql-focused-image-priority
 ```
 
 Copy and compare collection state with `--adopt-sql-targets --apply`. Run
@@ -59,6 +60,9 @@ previously adopted pending renditions in bounded windows. `--sql-enqueue-pending
 Copy N` and `--sql-enqueue-pending Resize N` can seed a window manually without
 enabling the kind. Each queue is capped relative to its concurrency, so the
 dispatchers materialize only a small number of eligible rows per cycle.
+Positive minimum priorities use an indexed image-priority seek; a zero minimum
+uses pending-rendition indexes so an idle resize cycle does not scan completed
+source images.
 
 ## Worker and recovery
 

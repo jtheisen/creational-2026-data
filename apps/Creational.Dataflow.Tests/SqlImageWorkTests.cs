@@ -34,6 +34,7 @@ public sealed class SqlImageWorkTests
         }
         try
         {
+            await SetSettingAsync(factory, 3, false, 1000);
             Assert.Equal(1, await repository.FillPendingQueueAsync(ImageWorkKind.Resize, 1, CancellationToken.None));
             Assert.Empty(await repository.ClaimAsync(ImageWorkKind.Resize, 1, TimeSpan.FromMinutes(5), CancellationToken.None));
             await SetSettingAsync(factory, 3, true, 1000);
@@ -101,6 +102,64 @@ public sealed class SqlImageWorkTests
                 """, connection);
             command.Parameters.Add("@id", SqlDbType.Int).Value = id;
             await command.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
+    public async Task FocusedCopyQueueUsesPriorityAndKeepsAttemptHistory()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_TEST_CONNECTION_STRING");
+        if (string.IsNullOrWhiteSpace(connectionString)) return;
+        var factory = new SqlConnectionFactory(connectionString);
+        var repository = new SqlImageWorkRepository(factory, "catalog");
+        int id;
+        await using (var connection = await factory.OpenAsync(CancellationToken.None))
+        {
+            await using var insert = new SqlCommand("""
+                INSERT INTO catalog.Image(SourceWiki,CanonicalFileTitle,Priority,MetadataStatus,ImageInfoState)
+                    OUTPUT inserted.ImageId VALUES ('commonswiki',@title,2000,'commons',1);
+                """, connection);
+            insert.Parameters.Add("@title", SqlDbType.VarChar, 1536).Value =
+                "File:Sql focused copy " + Guid.NewGuid().ToString("N") + ".jpg";
+            id = Convert.ToInt32(await insert.ExecuteScalarAsync());
+            await using var rendition = new SqlCommand("""
+                INSERT INTO catalog.Rendition(ImageId,ShapeId,Complete) VALUES (@id,1,0);
+                """, connection);
+            rendition.Parameters.Add("@id", SqlDbType.Int).Value = id;
+            await rendition.ExecuteNonQueryAsync();
+        }
+        try
+        {
+            await SetSettingAsync(factory, 2, false, 1000);
+            Assert.Equal(1, await repository.FillPendingQueueAsync(ImageWorkKind.Copy, 1, CancellationToken.None));
+            await SetSettingAsync(factory, 2, true, 1000);
+            var claim = Assert.Single(await repository.ClaimAsync(ImageWorkKind.Copy, 1,
+                TimeSpan.FromMinutes(5), CancellationToken.None));
+            Assert.Equal(id, claim.ImageId);
+            Assert.True(await repository.CompleteRenditionAsync(claim, 1, 123, CancellationToken.None));
+            await using var connection = await factory.OpenAsync(CancellationToken.None);
+            await using var stale = new SqlCommand("""
+                UPDATE catalog.Rendition SET Stale=1 WHERE ImageId=@id AND ShapeId=1;
+                """, connection);
+            stale.Parameters.Add("@id", SqlDbType.Int).Value = id;
+            await stale.ExecuteNonQueryAsync();
+            Assert.Equal(1, await repository.FillPendingQueueAsync(ImageWorkKind.Copy, 1, CancellationToken.None));
+            var retry = Assert.Single(await repository.ClaimAsync(ImageWorkKind.Copy, 1,
+                TimeSpan.FromMinutes(5), CancellationToken.None));
+            Assert.Equal(2, retry.AttemptNumber);
+        }
+        finally
+        {
+            await SetSettingAsync(factory, 2, false, 0);
+            await using var connection = await factory.OpenAsync(CancellationToken.None);
+            await using var cleanup = new SqlCommand("""
+                DELETE FROM catalog.ImageWorkAttempt WHERE ImageId=@id;
+                DELETE FROM catalog.ImageWorkQueue WHERE ImageId=@id;
+                DELETE FROM catalog.Rendition WHERE ImageId=@id;
+                DELETE FROM catalog.Image WHERE ImageId=@id;
+                """, connection);
+            cleanup.Parameters.Add("@id", SqlDbType.Int).Value = id;
+            await cleanup.ExecuteNonQueryAsync();
         }
     }
 
