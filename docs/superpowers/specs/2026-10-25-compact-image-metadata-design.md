@@ -8,6 +8,10 @@ image work state and broad license statistics. This design replaces the empty
 migrated. It does not change the already loaded image identities or the
 existing Azure Tables application before cutover.
 
+The same migration stage also converts all SQL text columns to `VARCHAR` under
+the database's UTF-8 collation and evaluates `PAGE` compression. These changes
+apply to the populated catalog as well as the new compact image tables.
+
 The 400,545 catalog image identities come from page image references, not every
 file in the Wikimedia image dumps. Full `imageinfo` responses and image bytes
 remain in Blob Storage. SQL holds only the fields required to schedule work,
@@ -102,28 +106,41 @@ aggregates come from SQL, including exact sums of completed rendition bytes.
 
 ## Migration and validation
 
-1. Benchmark the compact schema with representative rows and indexes in an
+1. Record baseline row counts, allocated and reserved MiB by table and index,
+   compression setting, and representative query times. Measure maximum UTF-8
+   byte lengths for every populated text column. Size new `VARCHAR(n)` columns
+   by bytes, not by the old `NVARCHAR(n)` unit count; verify exact image-title
+   comparisons with a binary UTF-8 collation.
+2. Estimate `PAGE` compression savings for each clustered and nonclustered
+   index, starting with `TaxonName`. Test representative compressed data and
+   query/write performance. Convert the populated catalog text columns and
+   rebuild selected indexes in a measured order, one table or index at a time.
+   Account for the extra space required during rebuilds under Basic's 2 GiB
+   limit; temporarily raise the database tier for the migration if the live
+   headroom is insufficient. Do not assume every index benefits from `PAGE`.
+3. Benchmark the compact schema with representative rows and indexes in an
    isolated SQL schema. Measure reserved MiB, insertion cost, and pending-work
    and subtree aggregate queries against Basic's 2 GiB and 5 DTU limits.
-2. Add the compact schema as an additive migration to the already loaded
-   database. Keep existing image identity IDs stable. Convert text columns to
-   `VARCHAR` under the database's UTF-8 collation in a separately measured
-   migration; preserve exact image-title comparison semantics.
-3. Implement durable operational work, lease, retry, and attempt tables before
+4. Add the compact schema as an additive migration to the already loaded
+   database. Keep existing image identity IDs stable. New text columns use
+   `VARCHAR` from their first creation.
+5. Implement durable operational work, lease, retry, and attempt tables before
    switching image scheduling to the compact flags. Bulk-create current shape
    rows for catalog images, then map the existing Table rendition outcomes and
    Blob assets by `(source wiki, canonical file title)`. Existing Table rows
    use requested titles and title hashes, so resolve aliases, verify matches,
    and quarantine ambiguous outcomes rather than attach them to a guessed
    image ID. Verify each completed Blob before setting `Complete` and `Bytes`.
-4. Map imageinfo fetched during preview or import to broad categories and
+6. Map imageinfo fetched during preview or import to broad categories and
    retain its full snapshot in Blob under an ID-based name. Leave unfetched
    images null and failed lookups retryable. Verify category counts among
    imported images and spot-check unusual labels. Do not fetch imageinfo for
    the entire candidate catalog solely to populate category statistics.
-5. Switch dashboard and workers only after row counts, byte totals, sample
+7. Switch dashboard and workers only after row counts, byte totals, sample
    galleries, scheduling queries, and restart recovery agree with the old
-   workflow. Preserve old Table rows and Blob names until cutover validation.
+   workflow. Confirm the final allocated database size and repeat query times
+   on Basic before treating that tier as the steady-state choice. Preserve old
+   Table rows and Blob names until cutover validation.
 
 No historical full-resolution image import, curation redesign, exact license
 reporting in SQL, or broad control UI overhaul is included here.
