@@ -74,7 +74,7 @@ public sealed class SqlImageWorkRepository(SqlConnectionFactory factory, string 
         await using var connection = await factory.OpenAsync(ct);
         await using var command = new SqlCommand($"""
             DECLARE @minimum REAL,@enabled BIT,@capacity INT,@outstanding INT;
-            SELECT @minimum=MinimumPriority,@enabled=Enabled,
+            SELECT @minimum=CASE WHEN MinimumPriority<1 THEN 1 ELSE MinimumPriority END,@enabled=Enabled,
                 @capacity=CASE WHEN Concurrency*4>20 THEN Concurrency*4 ELSE 20 END
             FROM {Table("ImageWorkSetting")} WHERE Kind=1;
             IF @enabled=0 BEGIN SELECT 0; RETURN; END;
@@ -120,23 +120,6 @@ public sealed class SqlImageWorkRepository(SqlConnectionFactory factory, string 
         if (kind is not (ImageWorkKind.Copy or ImageWorkKind.Resize))
             throw new ArgumentOutOfRangeException(nameof(kind));
         if (limit is < 1 or > 1000) throw new ArgumentOutOfRangeException(nameof(limit));
-        var candidates = kind == ImageWorkKind.Copy ? $"""
-            FROM {Table("Rendition")} source WITH (INDEX(IX_Rendition_Work))
-            JOIN {Table("Image")} i ON i.ImageId=source.ImageId
-            WHERE source.ShapeId=1 AND i.ImageInfoState=1
-              AND (source.Complete=0 OR source.Stale=1)
-            """ : $"""
-            FROM (
-                SELECT ImageId FROM {Table("Rendition")} WITH (INDEX(IX_Rendition_Incomplete))
-                    WHERE ShapeId IN (2,3,4,5) AND Complete=0
-                UNION
-                SELECT ImageId FROM {Table("Rendition")} WITH (INDEX(IX_Rendition_Stale))
-                    WHERE ShapeId IN (2,3,4,5) AND Stale=1
-            ) pending
-            JOIN {Table("Image")} i ON i.ImageId=pending.ImageId
-            JOIN {Table("Rendition")} source ON source.ImageId=i.ImageId AND source.ShapeId=1
-            WHERE source.Complete=1 AND source.Stale=0
-            """;
         var focused = kind == ImageWorkKind.Copy ? $"""
             FROM {Table("Image")} i WITH (INDEX(IX_Image_Priority))
             JOIN {Table("Rendition")} source ON source.ImageId=i.ImageId AND source.ShapeId=1
@@ -163,7 +146,7 @@ public sealed class SqlImageWorkRepository(SqlConnectionFactory factory, string 
         await using var connection = await factory.OpenAsync(ct);
         await using var command = new SqlCommand($"""
             DECLARE @minimum REAL,@capacity INT,@outstanding INT,@inserted INT=0;
-            SELECT @minimum=MinimumPriority,
+            SELECT @minimum=CASE WHEN MinimumPriority<1 THEN 1 ELSE MinimumPriority END,
                 @capacity=CASE WHEN Concurrency*4>20 THEN Concurrency*4 ELSE 20 END
             FROM {Table("ImageWorkSetting")} WHERE Kind=@kind;
             SELECT @outstanding=COUNT(*) FROM {Table("ImageWorkQueue")}
@@ -171,14 +154,7 @@ public sealed class SqlImageWorkRepository(SqlConnectionFactory factory, string 
             SET @limit=CASE WHEN @outstanding>=@capacity THEN 0
                 WHEN @limit>@capacity-@outstanding THEN @capacity-@outstanding ELSE @limit END;
             IF @limit=0 BEGIN SELECT 0; RETURN; END;
-            IF @minimum>0
-            BEGIN
-                {InsertFrom(focused)}
-            END
-            ELSE
-            BEGIN
-                {InsertFrom(candidates)}
-            END;
+            {InsertFrom(focused)}
             SELECT @inserted;
             """, connection) { CommandTimeout = 120 };
         command.Parameters.Add("@kind", SqlDbType.TinyInt).Value = (byte)kind;
@@ -231,6 +207,9 @@ public sealed class SqlImageWorkRepository(SqlConnectionFactory factory, string 
             UPDATE i SET Priority=@priority FROM {Table("Image")} i JOIN #Focus f ON f.ImageId=i.ImageId;
             UPDATE q SET Priority=@priority FROM {Table("ImageWorkQueue")} q
                 JOIN #Focus f ON f.ImageId=q.ImageId;
+            UPDATE q SET State=0,DueAt=SYSUTCDATETIME(),LastError=NULL
+            FROM {Table("ImageWorkQueue")} q JOIN #Focus f ON f.ImageId=q.ImageId
+            WHERE q.State=3;
             COMMIT TRANSACTION;
             SELECT COUNT(*) FROM #Focus;
             """, connection) { CommandTimeout = 1800 };
@@ -280,6 +259,8 @@ public sealed class SqlImageWorkRepository(SqlConnectionFactory factory, string 
         await using var command = new SqlCommand($"""
             SET XACT_ABORT ON;
             BEGIN TRANSACTION;
+            IF NOT EXISTS (SELECT 1 FROM {Table("Image")} WHERE ImageId=@image)
+                THROW 51010, 'Image ID was not found', 1;
             IF EXISTS (SELECT 1 FROM {Table("ImageWorkQueue")} WITH (UPDLOCK,HOLDLOCK)
                        WHERE ImageId=@image AND Kind=2 AND State=2)
                 THROW 51011, 'Source copy is already active; retry marking stale after it finishes', 1;
@@ -311,7 +292,9 @@ public sealed class SqlImageWorkRepository(SqlConnectionFactory factory, string 
             SET XACT_ABORT ON;
             BEGIN TRANSACTION;
             DECLARE @enabled BIT,@minimum REAL,@slots INT;
-            SELECT @enabled=Enabled,@minimum=MinimumPriority,@slots=Concurrency
+            SELECT @enabled=Enabled,
+                @minimum=CASE WHEN MinimumPriority<1 THEN 1 ELSE MinimumPriority END,
+                @slots=Concurrency
             FROM {Table("ImageWorkSetting")} WITH (UPDLOCK,HOLDLOCK) WHERE Kind=@kind;
             IF @enabled=1
             BEGIN

@@ -55,8 +55,10 @@ does not start image imports by itself.
 write form takes `KIND ENABLED MINIMUM_PRIORITY CONCURRENCY PACING_MS`.
 `--sql-prioritize-image ID PRIORITY` or `--sql-prioritize-ott OTT_ID PRIORITY`
 changes the focus. Higher priority runs first; default priority and minimum
-are zero. Set a positive minimum to process only explicitly prioritized
-images. Existing queue priorities change in the same SQL operation.
+are zero. Priority below **1** is always suspended, even when the configured
+minimum is zero. The effective threshold is the larger of 1 and the setting's
+minimum priority. An attempt already running when priority drops may finish.
+Existing queue priorities change in the same SQL operation.
 `--sql-mark-image-metadata-stale ID` schedules a metadata refresh and reopens
 a blocked metadata item. Changing an image's priority also reopens its blocked
 items for an explicit retry.
@@ -90,7 +92,33 @@ releasing such claims. Expired resize claims without a batch record are
 recovered automatically. The status of a Container Apps execution alone is
 never treated as proof that its output was published.
 
-The smallest live test is one image at a priority above the configured
-minimum, with concurrency one. Keep the other kinds disabled until that
+The smallest live test is one image at a priority above the effective
+threshold, with concurrency one. Keep the other kinds disabled until that
 stage's Blob and SQL attempt have both been verified. Observe Azure SQL file
 allocation with `--sql-capacity`; the current Basic database limit is 2 GiB.
+
+## HTTP control API
+
+The existing App Service authentication covers `/api/v1` as it does the
+dashboard. Every mutating request must include `X-Creational-Control: 1`;
+this header prevents cross-site form submissions, and no cross-origin browser
+access is configured. The API currently manages the pinned enwiki collection.
+Requests and responses are JSON; mutating routes return 400 for invalid input, 404 for
+unknown resources, and 409 for an in-flight source-copy conflict.
+
+| Method | Route | Purpose |
+|---|---|---|
+| GET | `/api/v1/collections/enwiki-2026-10-01` | Plan, target state, recent runs, parallelism |
+| POST | `/api/v1/collections/enwiki-2026-10-01/imports` | Start or get an active import |
+| PUT | `/api/v1/collections/enwiki-2026-10-01/settings/parallelism` | Set `{"value":1}` through the existing setting repository |
+| POST | `/api/v1/collections/enwiki-2026-10-01/targets/{kind}/{key}/stale` | Mark one defined target stale |
+| GET | `/api/v1/images/work` | Settings, queue counts, open resize batches |
+| PUT | `/api/v1/images/work/settings/{kind}` | Set `enabled`, `minimumPriority`, `concurrency`, `pacingMilliseconds` |
+| PUT | `/api/v1/images/{imageId}/priority` | Set `{"value":1}` |
+| PUT | `/api/v1/images/work/ott/{ottId}/priority` | Set subtree priority and return affected image count |
+| POST | `/api/v1/images/{imageId}/metadata/stale` | Request metadata refresh |
+| POST | `/api/v1/images/{imageId}/source/stale` | Request replacement of an existing w250 rendition |
+
+`{kind}` for image work is `Metadata`, `Copy`, or `Resize`. Image routes return
+404 when SQL image operations are disabled. A future same-origin UI can call
+these routes without reading SQL or Azure Tables directly.

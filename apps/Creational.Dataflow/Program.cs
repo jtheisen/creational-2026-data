@@ -603,8 +603,23 @@ builder.Services.AddSingleton<CollectionImportEngine>();
 builder.Services.AddSingleton<ICollectionImportEngine>(sp => sp.GetRequiredService<CollectionImportEngine>());
 builder.Services.AddHostedService<AttemptReconciliationService>();
 builder.Services.AddSingleton<ImportCoordinator>();
+builder.Services.AddControllers();
 var app = builder.Build();
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments("/api/v1") &&
+        !HttpMethods.IsGet(context.Request.Method) &&
+        !HttpMethods.IsHead(context.Request.Method) &&
+        !HttpMethods.IsOptions(context.Request.Method) &&
+        !string.Equals(context.Request.Headers["X-Creational-Control"], "1", StringComparison.Ordinal))
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        return;
+    }
+    await next(context);
+});
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapControllers();
 app.UseStaticFiles();
 app.MapStaticAssets();
 app.UseAntiforgery();
