@@ -23,6 +23,8 @@ reserve about 1,206 MiB.
 `ImageRights`, `Rendition`, and operational job/attempt tables are still empty
 or not yet created. This establishes catalog fit, not complete migration fit.
 Article text, markup, Parquet, imageinfo JSON, and image bytes remain in Blob.
+The planned compact replacement for the empty rights and rendition tables is
+described in the [image metadata design](superpowers/specs/2026-10-25-compact-image-metadata-design.md).
 
 `ImageRights` and `Rendition` have schema but no rows because this load only
 migrated the catalog and source image metadata. The existing license/attribution
