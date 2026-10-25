@@ -97,6 +97,23 @@ if (args.Length == 1 && args[0] == "--backfill-sql-renditions")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--trim-sql-image-hashes")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for SQL hash maintenance.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+    var loader = new SqlCatalogLoader(new SqlConnectionFactory(connectionString), schema);
+    var updated = await loader.TrimSourceHashesAsync(connection, 1_000, CancellationToken.None,
+        (imageId, rows) =>
+        {
+            if (imageId % 20_000 < 1_000)
+                Console.Error.WriteLine($"Hash trim reached ImageId {imageId}, updated {rows} rows.");
+        });
+    Console.WriteLine($"Trimmed {updated} padded source hashes.");
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--sql-estimate-page" && int.TryParse(args[2], out var indexId))
 {
     var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")

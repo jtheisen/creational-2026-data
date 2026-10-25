@@ -8,6 +8,55 @@ namespace Creational.Dataflow.Tests;
 public sealed class SqlCatalogSchemaTests
 {
     [Fact]
+    public async Task ImageBatchStagingPreservesVariableLengthSourceHashes()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_TEST_CONNECTION_STRING");
+        if (string.IsNullOrWhiteSpace(connectionString)) return;
+        await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+        await using (var create = new SqlCommand(SqlCatalogSchema.RenderImageBatchTable(), connection))
+            await create.ExecuteNonQueryAsync();
+        await using (var insert = new SqlCommand("""
+            INSERT INTO #CatalogImageBatch(SourceWiki,CanonicalFileTitle,MetadataStatus,SourceSha1)
+            VALUES ('commonswiki','File:Example.jpg','commons','abc');
+            """, connection))
+            await insert.ExecuteNonQueryAsync();
+        Assert.Equal(3, await ScalarAsync("SELECT DATALENGTH(SourceSha1) FROM #CatalogImageBatch", connection, null));
+    }
+
+    [Fact]
+    public async Task ExistingPaddedSourceHashesAreTrimmedInRestartableBatches()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_TEST_CONNECTION_STRING");
+        if (string.IsNullOrWhiteSpace(connectionString)) return;
+        var schema = "ct_" + Guid.NewGuid().ToString("N")[..12];
+        await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+        await using (var create = new SqlCommand($"CREATE SCHEMA [{schema}]", connection))
+            await create.ExecuteNonQueryAsync();
+        try
+        {
+            await ExecuteAsync(SqlCatalogSchema.Render(schema), connection, null);
+            await ExecuteAsync($"""
+                INSERT INTO [{schema}].Image(SourceWiki,CanonicalFileTitle,SourceSha1)
+                VALUES ('commonswiki','File:One.jpg',CAST('abc' AS CHAR(40))),
+                       ('commonswiki','File:Two.jpg',CAST('def' AS CHAR(40)));
+                """, connection, null);
+            Assert.Equal(2, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].Image WHERE DATALENGTH(SourceSha1)=40", connection, null));
+            var loader = new SqlCatalogLoader(new SqlConnectionFactory(connectionString), schema);
+            Assert.Equal(2, await loader.TrimSourceHashesAsync(connection, 1, CancellationToken.None));
+            Assert.Equal(0, await loader.TrimSourceHashesAsync(connection, 1, CancellationToken.None));
+            Assert.Equal(2, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].Image WHERE DATALENGTH(SourceSha1)=3 AND SourceSha1 IN ('abc','def')", connection, null));
+        }
+        finally
+        {
+            foreach (var table in new[] { "PageImage", "Rendition", "TaxonPage", "TaxonName", "Page",
+                "Image", "Taxon", "Collection", "TaxonomyTree", "CatalogLoadCheckpoint",
+                "RenditionShape", "LicenseCategory" })
+                await ExecuteAsync($"DROP TABLE IF EXISTS [{schema}].[{table}]", connection, null);
+            await ExecuteAsync($"DROP SCHEMA [{schema}]", connection, null);
+        }
+    }
+
+    [Fact]
     public async Task CapacityPreflightMeasuresUtf8BytesOfUnicodeText()
     {
         var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_TEST_CONNECTION_STRING");
@@ -162,9 +211,9 @@ public sealed class SqlCatalogSchemaTests
             await ExecuteAsync($"INSERT INTO [{schema}].Collection(CollectionId,CollectionKey) VALUES (1,N'enwiki')", connection, transaction);
             await ExecuteAsync($"INSERT INTO [{schema}].TaxonomyTree(TreeId,TreeKey) VALUES (1,N'ott')", connection, transaction);
             await ExecuteAsync($"INSERT INTO [{schema}].Taxon(TreeId,OttId,DfsStart,DfsEndExclusive) VALUES (1,1,1,2)", connection, transaction);
-            await ExecuteAsync($"INSERT INTO [{schema}].TaxonName(TreeId,OttId,Name) VALUES (1,1,N'中 𐀀 é')", connection, transaction);
-            await ExecuteAsync($"INSERT INTO [{schema}].Page(CollectionId,PageId,Title) VALUES (1,1,N'Élan 𐀀')", connection, transaction);
-            await ExecuteAsync($"INSERT INTO [{schema}].Image(SourceWiki,CanonicalFileTitle,SourceSha1) VALUES ('commonswiki',N'File:Élan.jpg','abc'),('commonswiki',N'File:élan.jpg','def')", connection, transaction);
+            await ExecuteAsync($"INSERT INTO [{schema}].TaxonName(TreeId,OttId,Name) VALUES (1,1,REPLICATE(N'中',1024))", connection, transaction);
+            await ExecuteAsync($"INSERT INTO [{schema}].Page(CollectionId,PageId,Title) VALUES (1,1,REPLICATE(N'中',512))", connection, transaction);
+            await ExecuteAsync($"INSERT INTO [{schema}].Image(SourceWiki,CanonicalFileTitle,SourceSha1) VALUES ('commonswiki',N'File:Élan.jpg','abc'),('commonswiki',N'File:élan.jpg','def'),('commonswiki',N'File:'+REPLICATE(N'中',500)+N'.jpg','ghi')", connection, transaction);
             await ExecuteAsync($"INSERT INTO [{schema}].PageImage(CollectionId,PageId,ReferenceIndex,FileTitle,SourceWiki,Role) VALUES (1,1,0,N'File:Élan.jpg','commonswiki','taxobox')", connection, transaction);
 
             var steps = SqlCatalogSchema.RenderUtf8ConversionSteps(schema);
@@ -176,8 +225,13 @@ public sealed class SqlCatalogSchemaTests
             Assert.Equal("varchar", await TypeAsync(schema, "TaxonName", "Name", connection, transaction));
             Assert.Equal("varchar", await TypeAsync(schema, "Page", "Title", connection, transaction));
             Assert.Equal("varchar", await TypeAsync(schema, "Image", "CanonicalFileTitle", connection, transaction));
-            Assert.Equal(2, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].Image", connection, transaction));
-            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].TaxonName WHERE Name='中 𐀀 é'", connection, transaction));
+            Assert.Equal(3, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].Image", connection, transaction));
+            Assert.Equal(new string('中', 1024), await TextAsync($"SELECT Name FROM [{schema}].TaxonName WHERE OttId=1", connection, transaction));
+            Assert.Equal(new string('中', 512), await TextAsync($"SELECT Title FROM [{schema}].Page WHERE PageId=1", connection, transaction));
+            Assert.Equal("File:" + new string('中', 500) + ".jpg", await TextAsync($"SELECT CanonicalFileTitle FROM [{schema}].Image WHERE SourceSha1='ghi'", connection, transaction));
+            Assert.Equal(3072, await ScalarAsync($"SELECT DATALENGTH(Name) FROM [{schema}].TaxonName WHERE OttId=1", connection, transaction));
+            Assert.Equal(1536, await ScalarAsync($"SELECT DATALENGTH(Title) FROM [{schema}].Page WHERE PageId=1", connection, transaction));
+            Assert.True(await ScalarAsync($"SELECT DATALENGTH(CanonicalFileTitle) FROM [{schema}].Image WHERE SourceSha1='ghi'", connection, transaction) > 512);
             Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].PageImage WHERE FileTitle='File:Élan.jpg'", connection, transaction));
             await transaction.RollbackAsync();
         }
@@ -199,30 +253,48 @@ public sealed class SqlCatalogSchemaTests
             await create.ExecuteNonQueryAsync();
         try
         {
-            await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
-            await ExecuteAsync(SqlCatalogSchema.Render(schema), connection, transaction);
-            await ExecuteAsync($"INSERT INTO [{schema}].Collection(CollectionId,CollectionKey) VALUES (1,'enwiki')", connection, transaction);
-            await ExecuteAsync($"INSERT INTO [{schema}].TaxonomyTree(TreeId,TreeKey) VALUES (1,'ott')", connection, transaction);
-            await ExecuteAsync($"INSERT INTO [{schema}].Taxon(TreeId,OttId,DfsStart,DfsEndExclusive) VALUES (1,1,1,2)", connection, transaction);
-            await ExecuteAsync($"INSERT INTO [{schema}].TaxonName(TreeId,OttId,Name) VALUES (1,1,'Élan 𐀀')", connection, transaction);
-            await ExecuteAsync($"INSERT INTO [{schema}].Page(CollectionId,PageId,Title) VALUES (1,1,'Élan')", connection, transaction);
-            await ExecuteAsync($"INSERT INTO [{schema}].Image(SourceWiki,CanonicalFileTitle) VALUES ('commonswiki','File:Élan.jpg')", connection, transaction);
-            await ExecuteAsync($"INSERT INTO [{schema}].PageImage(CollectionId,PageId,ReferenceIndex,FileTitle,SourceWiki,Role) VALUES (1,1,0,'File:Élan.jpg','commonswiki','taxobox')", connection, transaction);
+            await ExecuteAsync(SqlCatalogSchema.Render(schema), connection, null);
+            await ExecuteAsync($"INSERT INTO [{schema}].Collection(CollectionId,CollectionKey) VALUES (1,'enwiki')", connection, null);
+            await ExecuteAsync($"INSERT INTO [{schema}].TaxonomyTree(TreeId,TreeKey) VALUES (1,'ott')", connection, null);
+            await ExecuteAsync($"INSERT INTO [{schema}].Taxon(TreeId,OttId,DfsStart,DfsEndExclusive) VALUES (1,1,1,2)", connection, null);
+            await ExecuteAsync($"INSERT INTO [{schema}].TaxonName(TreeId,OttId,Name) VALUES (1,1,'Élan 𐀀')", connection, null);
+            await ExecuteAsync($"INSERT INTO [{schema}].Page(CollectionId,PageId,Title) VALUES (1,1,'Élan')", connection, null);
+            await ExecuteAsync($"INSERT INTO [{schema}].Image(SourceWiki,CanonicalFileTitle) VALUES ('commonswiki','File:Élan.jpg')", connection, null);
+            await ExecuteAsync($"INSERT INTO [{schema}].PageImage(CollectionId,PageId,ReferenceIndex,FileTitle,SourceWiki,Role) VALUES (1,1,0,'File:Élan.jpg','commonswiki','taxobox')", connection, null);
 
             var steps = SqlCatalogSchema.RenderPageCompressionSteps(schema);
-            Assert.True(steps.Count >= 6);
-            await ExecuteAsync(steps[0], connection, transaction);
-            foreach (var step in steps) await ExecuteAsync(step, connection, transaction);
-            foreach (var step in steps) await ExecuteAsync(step, connection, transaction);
+            Assert.Equal(6, steps.Count);
+            await ExecuteAsync(steps[0], connection, null);
+            await Assert.ThrowsAsync<SqlException>(() => ExecuteAsync("THROW 51010, 'Simulated later migration failure.', 1", connection, null));
+            await connection.CloseAsync();
+            await connection.OpenAsync();
 
-            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].TaxonName WHERE Name='Élan 𐀀'", connection, transaction));
-            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].PageImage WHERE FileTitle='File:Élan.jpg'", connection, transaction));
-            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM sys.partitions WHERE object_id=OBJECT_ID(N'{schema}.TaxonName') AND index_id=1 AND data_compression_desc='PAGE'", connection, transaction));
-            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM sys.partitions WHERE object_id=OBJECT_ID(N'{schema}.Image') AND index_id=1 AND data_compression_desc='PAGE'", connection, transaction));
-            await transaction.RollbackAsync();
+            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM sys.partitions WHERE object_id=OBJECT_ID(N'{schema}.TaxonName') AND index_id=1 AND data_compression_desc='PAGE'", connection, null));
+            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM sys.partitions WHERE object_id=OBJECT_ID(N'{schema}.Image') AND index_id=1 AND data_compression_desc='NONE'", connection, null));
+            foreach (var step in steps) await ExecuteAsync(step, connection, null);
+            foreach (var step in steps) await ExecuteAsync(step, connection, null);
+
+            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].TaxonName WHERE Name='Élan 𐀀'", connection, null));
+            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].PageImage WHERE FileTitle='File:Élan.jpg'", connection, null));
+            Assert.Equal(6, await ScalarAsync($"""
+                SELECT COUNT(*) FROM sys.partitions p JOIN sys.indexes i
+                  ON i.object_id=p.object_id AND i.index_id=p.index_id
+                JOIN sys.tables t ON t.object_id=i.object_id
+                JOIN sys.schemas s ON s.schema_id=t.schema_id
+                WHERE s.name='{schema}' AND p.data_compression_desc='PAGE'
+                  AND ((t.name='TaxonName' AND i.name='PK_TaxonName')
+                    OR (t.name='Image' AND i.name IN ('PK_Image','UQ_Image_SourceTitle'))
+                    OR (t.name='Page' AND i.name IN ('PK_Page','IX_Page_Title'))
+                    OR (t.name='PageImage' AND i.name='PK_PageImage'))
+                """, connection, null));
         }
         finally
         {
+            if (connection.State != ConnectionState.Open) await connection.OpenAsync();
+            foreach (var table in new[] { "PageImage", "Rendition", "TaxonPage", "TaxonName", "Page",
+                "Image", "Taxon", "Collection", "TaxonomyTree", "CatalogLoadCheckpoint",
+                "RenditionShape", "LicenseCategory" })
+                await ExecuteAsync($"DROP TABLE IF EXISTS [{schema}].[{table}]", connection, null);
             await using var drop = new SqlCommand($"DROP SCHEMA [{schema}]", connection);
             await drop.ExecuteNonQueryAsync();
         }
@@ -330,7 +402,7 @@ public sealed class SqlCatalogSchemaTests
         }
     }
 
-    private static async Task ExecuteAsync(string sql, SqlConnection connection, SqlTransaction transaction)
+    private static async Task ExecuteAsync(string sql, SqlConnection connection, SqlTransaction? transaction)
     {
         await using var command = new SqlCommand(sql, connection, transaction) { CommandTimeout = 120 };
         await command.ExecuteNonQueryAsync();
@@ -340,6 +412,12 @@ public sealed class SqlCatalogSchemaTests
     {
         await using var command = new SqlCommand(sql, connection, transaction);
         return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    private static async Task<string> TextAsync(string sql, SqlConnection connection, SqlTransaction? transaction)
+    {
+        await using var command = new SqlCommand(sql, connection, transaction);
+        return (string)(await command.ExecuteScalarAsync() ?? throw new InvalidOperationException("Value missing"));
     }
 
     private static async Task<string> TypeAsync(string schema, string table, string column,

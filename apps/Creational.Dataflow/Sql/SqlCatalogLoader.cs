@@ -169,6 +169,45 @@ public sealed class SqlCatalogLoader(SqlConnectionFactory connections, string sc
         return inserted;
     }
 
+    public async Task<long> TrimSourceHashesAsync(SqlConnection connection, int batchSize,
+        CancellationToken cancellationToken, Action<int, long>? progress = null)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batchSize);
+        var afterImageId = 0;
+        long updated = 0;
+        while (true)
+        {
+            await using var command = new SqlCommand($"""
+                DECLARE @nextImageId INT;
+                SELECT @nextImageId=MAX(ImageId) FROM (
+                    SELECT TOP (@batchSize) ImageId
+                    FROM [{_schema}].[Image]
+                    WHERE ImageId>@afterImageId
+                    ORDER BY ImageId
+                ) b;
+                IF @nextImageId IS NULL
+                BEGIN
+                    SELECT CAST(NULL AS INT) AS NextImageId, CAST(0 AS INT) AS Updated;
+                    RETURN;
+                END;
+                UPDATE [{_schema}].[Image]
+                SET SourceSha1=RTRIM(SourceSha1)
+                WHERE ImageId>@afterImageId AND ImageId<=@nextImageId
+                  AND SourceSha1 IS NOT NULL AND DATALENGTH(SourceSha1)>LEN(SourceSha1);
+                SELECT @nextImageId AS NextImageId, @@ROWCOUNT AS Updated;
+                """, connection) { CommandTimeout = 180 };
+            command.Parameters.Add("@batchSize", SqlDbType.Int).Value = batchSize;
+            command.Parameters.Add("@afterImageId", SqlDbType.Int).Value = afterImageId;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            await reader.ReadAsync(cancellationToken);
+            if (reader.IsDBNull(0)) break;
+            afterImageId = reader.GetInt32(0);
+            updated += reader.GetInt32(1);
+            progress?.Invoke(afterImageId, updated);
+        }
+        return updated;
+    }
+
     private async Task<long> LoadQueryAsync(SqlConnection sql, DuckDBConnection duck, string table,
         string loadKey, string fingerprint, string query, int batchSize, CancellationToken ct,
         SqlCatalogBatchTransform? transform = null)
@@ -270,18 +309,7 @@ public sealed class SqlCatalogLoader(SqlConnectionFactory connections, string sc
 
     private static async Task CreateImageBatchTableAsync(SqlConnection connection, CancellationToken ct)
     {
-        await using var command = new SqlCommand("""
-            CREATE TABLE #CatalogImageBatch (
-                SourceWiki VARCHAR(16) NOT NULL,
-                CanonicalFileTitle VARCHAR(1536) COLLATE Latin1_General_100_BIN2_UTF8 NOT NULL,
-                MetadataStatus VARCHAR(32) NOT NULL,
-                OriginalBytes BIGINT NULL,
-                SourceSha1 CHAR(40) NULL,
-                UploadedAt DATETIME2(0) NULL,
-                Mime VARCHAR(128) NULL,
-                MediaType VARCHAR(32) NULL
-            )
-            """, connection);
+        await using var command = new SqlCommand(SqlCatalogSchema.RenderImageBatchTable(), connection);
         await command.ExecuteNonQueryAsync(ct);
     }
 }

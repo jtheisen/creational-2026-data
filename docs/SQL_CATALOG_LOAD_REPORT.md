@@ -138,6 +138,15 @@ stored counters rather than repeated catalog-wide scans. This capacity includes
 only pending SQL rendition state; existing imported thumbnail bytes and
 imageinfo snapshots remain in Blob/Table storage until a later cutover.
 
+Final review found the image load staging table used `CHAR(40)` for a base36
+SHA-1 that is usually 31 bytes. This had padded all 400,545 SQL hashes to 40
+bytes. Staging now uses `VARCHAR(40)`; a bounded maintenance pass trimmed all
+400,545 existing values, and a second pass changed zero rows. A sampled hash
+now has 31 stored bytes and zero padded hashes remain. Rebuilding the compressed
+`Image` primary index after the updates reduced that table's reservation from
+97.5 to **54.4 MiB**. The data file remained at 1,680 MiB and all catalog
+row/link/source-byte checks still match.
+
 ## Subtree benchmark
 
 The query selects distinct pages by a DFS-range index on `TaxonPage`, then

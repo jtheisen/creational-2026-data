@@ -27,6 +27,19 @@ public static partial class SqlCatalogSchema
     public static string RenderCompactImages(string schema)
         => RenderResource(schema, "005_compact_images.sql");
 
+    public static string RenderImageBatchTable() => """
+        CREATE TABLE #CatalogImageBatch (
+            SourceWiki VARCHAR(16) NOT NULL,
+            CanonicalFileTitle VARCHAR(1536) COLLATE Latin1_General_100_BIN2_UTF8 NOT NULL,
+            MetadataStatus VARCHAR(32) NOT NULL,
+            OriginalBytes BIGINT NULL,
+            SourceSha1 VARCHAR(40) NULL,
+            UploadedAt DATETIME2(0) NULL,
+            Mime VARCHAR(128) NULL,
+            MediaType VARCHAR(32) NULL
+        )
+        """;
+
     public static IReadOnlyList<string> RenderPageCompressionSteps(string schema)
         => RenderPageCompression(schema).ReplaceLineEndings("\n")
             .Split("\n\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
