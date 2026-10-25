@@ -1,15 +1,15 @@
 CREATE TABLE [__SCHEMA__].[Collection] (
     CollectionId SMALLINT NOT NULL,
-    CollectionKey NVARCHAR(128) NOT NULL,
-    SourceFingerprint CHAR(64) NULL,
+    CollectionKey VARCHAR(384) NOT NULL,
+    SourceFingerprint VARCHAR(64) NULL,
     CONSTRAINT PK_Collection PRIMARY KEY CLUSTERED (CollectionId),
     CONSTRAINT UQ_Collection_Key UNIQUE (CollectionKey)
 );
 
 CREATE TABLE [__SCHEMA__].[TaxonomyTree] (
     TreeId SMALLINT NOT NULL,
-    TreeKey NVARCHAR(128) NOT NULL,
-    SourceFingerprint CHAR(64) NULL,
+    TreeKey VARCHAR(384) NOT NULL,
+    SourceFingerprint VARCHAR(64) NULL,
     CONSTRAINT PK_TaxonomyTree PRIMARY KEY CLUSTERED (TreeId),
     CONSTRAINT UQ_TaxonomyTree_Key UNIQUE (TreeKey)
 );
@@ -29,7 +29,7 @@ CREATE UNIQUE INDEX IX_Taxon_DfsStart ON [__SCHEMA__].[Taxon](TreeId, DfsStart) 
 CREATE TABLE [__SCHEMA__].[TaxonName] (
     TreeId SMALLINT NOT NULL,
     OttId INT NOT NULL,
-    Name NVARCHAR(1024) NOT NULL,
+    Name VARCHAR(3072) NOT NULL,
     CONSTRAINT PK_TaxonName PRIMARY KEY CLUSTERED (TreeId, OttId),
     CONSTRAINT FK_TaxonName_Taxon FOREIGN KEY (TreeId, OttId) REFERENCES [__SCHEMA__].[Taxon](TreeId, OttId)
 );
@@ -37,7 +37,7 @@ CREATE TABLE [__SCHEMA__].[TaxonName] (
 CREATE TABLE [__SCHEMA__].[Page] (
     CollectionId SMALLINT NOT NULL,
     PageId BIGINT NOT NULL,
-    Title NVARCHAR(512) NOT NULL,
+    Title VARCHAR(1536) NOT NULL,
     RevisionId BIGINT NULL,
     UnresolvedImageCount INT NOT NULL CONSTRAINT DF_Page_UnresolvedImageCount DEFAULT (0),
     CONSTRAINT PK_Page PRIMARY KEY CLUSTERED (CollectionId, PageId),
@@ -61,12 +61,12 @@ CREATE INDEX IX_TaxonPage_Page ON [__SCHEMA__].[TaxonPage](CollectionId, PageId)
 CREATE TABLE [__SCHEMA__].[Image] (
     ImageId INT IDENTITY(1,1) NOT NULL,
     SourceWiki VARCHAR(16) NOT NULL,
-    CanonicalFileTitle NVARCHAR(512) COLLATE Latin1_General_100_BIN2 NOT NULL,
+    CanonicalFileTitle VARCHAR(1536) COLLATE Latin1_General_100_BIN2_UTF8 NOT NULL,
     Priority REAL NOT NULL CONSTRAINT DF_Image_Priority DEFAULT (0),
     MetadataStatus VARCHAR(32) NOT NULL CONSTRAINT DF_Image_MetadataStatus DEFAULT ('pending'),
     MetadataStale BIT NOT NULL CONSTRAINT DF_Image_MetadataStale DEFAULT (0),
     OriginalBytes BIGINT NULL,
-    SourceSha1 CHAR(40) NULL,
+    SourceSha1 VARCHAR(40) NULL,
     UploadedAt DATETIME2(0) NULL,
     Mime VARCHAR(128) NULL,
     MediaType VARCHAR(32) NULL,
@@ -77,9 +77,9 @@ CREATE TABLE [__SCHEMA__].[Image] (
 
 CREATE TABLE [__SCHEMA__].[ImageRights] (
     ImageId INT NOT NULL,
-    LicenseShortName NVARCHAR(128) NULL,
+    LicenseShortName VARCHAR(384) NULL,
     LicenseUrl VARCHAR(1024) NULL,
-    Attribution NVARCHAR(2048) NULL,
+    Attribution VARCHAR(6144) NULL,
     MissingRights BIT NOT NULL CONSTRAINT DF_ImageRights_MissingRights DEFAULT (0),
     RawImageInfoPath VARCHAR(512) NULL,
     FetchedAt DATETIME2(0) NULL,
@@ -91,7 +91,7 @@ CREATE TABLE [__SCHEMA__].[PageImage] (
     CollectionId SMALLINT NOT NULL,
     PageId BIGINT NOT NULL,
     ReferenceIndex INT NOT NULL,
-    FileTitle NVARCHAR(512) NOT NULL,
+    FileTitle VARCHAR(1536) NOT NULL,
     SourceWiki VARCHAR(16) NULL,
     ImageId INT NULL,
     Role VARCHAR(32) NOT NULL,
@@ -112,7 +112,7 @@ CREATE TABLE [__SCHEMA__].[Rendition] (
     Sha256 BINARY(32) NULL,
     SourceSha256 BINARY(32) NULL,
     RecipeVersion VARCHAR(64) NULL,
-    LastError NVARCHAR(1024) NULL,
+    LastError VARCHAR(3072) NULL,
     UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_Rendition_UpdatedAt DEFAULT (SYSUTCDATETIME()),
     CONSTRAINT PK_Rendition PRIMARY KEY CLUSTERED (ImageId, Variant),
     CONSTRAINT FK_Rendition_Image FOREIGN KEY (ImageId) REFERENCES [__SCHEMA__].[Image](ImageId),
@@ -120,8 +120,8 @@ CREATE TABLE [__SCHEMA__].[Rendition] (
 );
 
 CREATE TABLE [__SCHEMA__].[CatalogLoadCheckpoint] (
-    LoadKey NVARCHAR(256) NOT NULL,
-    SourceFingerprint CHAR(64) NOT NULL,
+    LoadKey VARCHAR(768) NOT NULL,
+    SourceFingerprint VARCHAR(64) NOT NULL,
     NextOrdinal BIGINT NOT NULL,
     Completed BIT NOT NULL CONSTRAINT DF_CatalogLoadCheckpoint_Completed DEFAULT (0),
     UpdatedAt DATETIME2(0) NOT NULL CONSTRAINT DF_CatalogLoadCheckpoint_UpdatedAt DEFAULT (SYSUTCDATETIME()),

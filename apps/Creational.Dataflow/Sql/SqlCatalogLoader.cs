@@ -83,7 +83,7 @@ public sealed class SqlCatalogLoader(SqlConnectionFactory connections, string sc
             WHERE NOT EXISTS (
                 SELECT 1 FROM [{_schema}].[Image] i WITH (UPDLOCK,HOLDLOCK)
                 WHERE i.SourceWiki=b.SourceWiki
-                  AND i.CanonicalFileTitle=b.CanonicalFileTitle COLLATE Latin1_General_100_BIN2);
+                  AND i.CanonicalFileTitle=b.CanonicalFileTitle COLLATE Latin1_General_100_BIN2_UTF8);
             DELETE FROM #CatalogImageBatch;
             """);
         counts["Image"] = await LoadQueryAsync(sql, duck, "Image", $"Image:{collectionId}",
@@ -100,7 +100,7 @@ public sealed class SqlCatalogLoader(SqlConnectionFactory connections, string sc
                 UPDATE TOP (5000) p SET ImageId=i.ImageId
                 FROM [{_schema}].[PageImage] p
                 JOIN [{_schema}].[Image] i ON i.SourceWiki=p.SourceWiki
-                 AND i.CanonicalFileTitle=p.FileTitle COLLATE Latin1_General_100_BIN2
+                 AND i.CanonicalFileTitle=p.FileTitle COLLATE Latin1_General_100_BIN2_UTF8
                 WHERE p.CollectionId=@collection AND p.ImageId IS NULL;
                 """, sql) { CommandTimeout = 120 };
             link.Parameters.Add("@collection", SqlDbType.SmallInt).Value = collectionId;
@@ -217,8 +217,8 @@ public sealed class SqlCatalogLoader(SqlConnectionFactory connections, string sc
             SELECT [{keyColumn}],SourceFingerprint FROM [{_schema}].[{table}] WHERE [{idColumn}]=@id;
             """, connection);
         command.Parameters.Add("@id", SqlDbType.SmallInt).Value = id;
-        command.Parameters.Add("@key", SqlDbType.NVarChar, 128).Value = key;
-        command.Parameters.Add("@fingerprint", SqlDbType.Char, 64).Value = fingerprint;
+        command.Parameters.Add("@key", SqlDbType.VarChar, 384).Value = key;
+        command.Parameters.Add("@fingerprint", SqlDbType.VarChar, 64).Value = fingerprint;
         await using var reader = await command.ExecuteReaderAsync(ct);
         if (!await reader.ReadAsync(ct) || reader.GetString(0) != key || reader.IsDBNull(1) ||
             !reader.GetString(1).Equals(fingerprint, StringComparison.OrdinalIgnoreCase))
@@ -230,7 +230,7 @@ public sealed class SqlCatalogLoader(SqlConnectionFactory connections, string sc
         await using var command = new SqlCommand("""
             CREATE TABLE #CatalogImageBatch (
                 SourceWiki VARCHAR(16) NOT NULL,
-                CanonicalFileTitle NVARCHAR(512) NOT NULL,
+                CanonicalFileTitle VARCHAR(1536) COLLATE Latin1_General_100_BIN2_UTF8 NOT NULL,
                 MetadataStatus VARCHAR(32) NOT NULL,
                 OriginalBytes BIGINT NULL,
                 SourceSha1 CHAR(40) NULL,

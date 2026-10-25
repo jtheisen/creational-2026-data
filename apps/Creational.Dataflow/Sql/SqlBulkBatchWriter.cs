@@ -15,7 +15,7 @@ public sealed class SqlBulkBatchWriter(string schema)
         string sourceFingerprint, CancellationToken cancellationToken)
     {
         await using var command = new SqlCommand($"SELECT SourceFingerprint,NextOrdinal,Completed FROM [{_schema}].CatalogLoadCheckpoint WHERE LoadKey=@key", connection);
-        command.Parameters.AddWithValue("@key", loadKey);
+        command.Parameters.Add("@key", SqlDbType.VarChar, 768).Value = loadKey;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return new(0, false);
         ValidateFingerprint(reader.GetString(0), sourceFingerprint);
@@ -34,7 +34,7 @@ public sealed class SqlBulkBatchWriter(string schema)
         try
         {
             await using var current = new SqlCommand($"SELECT SourceFingerprint,NextOrdinal,Completed FROM [{_schema}].CatalogLoadCheckpoint WITH (UPDLOCK,HOLDLOCK) WHERE LoadKey=@key", connection, transaction);
-            current.Parameters.AddWithValue("@key", loadKey);
+            current.Parameters.Add("@key", SqlDbType.VarChar, 768).Value = loadKey;
             string? recordedFingerprint = null;
             long recordedOrdinal = 0;
             var completed = false;
@@ -86,9 +86,9 @@ public sealed class SqlBulkBatchWriter(string schema)
                 ? $"INSERT INTO [{_schema}].CatalogLoadCheckpoint(LoadKey,SourceFingerprint,NextOrdinal) VALUES (@key,@fingerprint,@next)"
                 : $"UPDATE [{_schema}].CatalogLoadCheckpoint SET NextOrdinal=@next,UpdatedAt=SYSUTCDATETIME() WHERE LoadKey=@key";
             await using var checkpoint = new SqlCommand(sql, connection, transaction);
-            checkpoint.Parameters.AddWithValue("@key", loadKey);
+            checkpoint.Parameters.Add("@key", SqlDbType.VarChar, 768).Value = loadKey;
             if (recordedFingerprint is null)
-                checkpoint.Parameters.AddWithValue("@fingerprint", sourceFingerprint);
+                checkpoint.Parameters.Add("@fingerprint", SqlDbType.VarChar, 64).Value = sourceFingerprint;
             checkpoint.Parameters.AddWithValue("@next", batch.NextOrdinal);
             await checkpoint.ExecuteNonQueryAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
@@ -115,8 +115,8 @@ public sealed class SqlBulkBatchWriter(string schema)
                     (LoadKey,SourceFingerprint,NextOrdinal,Completed)
                 VALUES (@key,@fingerprint,0,1);
             """, connection);
-        command.Parameters.AddWithValue("@key", loadKey);
-        command.Parameters.AddWithValue("@fingerprint", sourceFingerprint);
+        command.Parameters.Add("@key", SqlDbType.VarChar, 768).Value = loadKey;
+        command.Parameters.Add("@fingerprint", SqlDbType.VarChar, 64).Value = sourceFingerprint;
         command.Parameters.AddWithValue("@next", nextOrdinal);
         if (await command.ExecuteNonQueryAsync(cancellationToken) < 1)
             throw new InvalidOperationException($"Cannot complete {loadKey}: source or checkpoint differs.");

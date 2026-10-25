@@ -11,6 +11,16 @@ public static partial class SqlCatalogSchema
     public static string Render(string schema)
         => RenderResource(schema, "001_catalog.sql");
 
+    public static string RenderLegacy(string schema)
+        => RenderResource(schema, "000_catalog_legacy.sql");
+
+    public static string RenderUtf8Conversion(string schema)
+        => RenderResource(schema, "003_utf8_catalog.sql");
+
+    public static IReadOnlyList<string> RenderUtf8ConversionSteps(string schema)
+        => RenderUtf8Conversion(schema).ReplaceLineEndings("\n")
+            .Split("\n\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
     public static string RenderTaxonPageDfsColumn(string schema)
         => RenderResource(schema, "002_taxon_page_dfs.sql");
 

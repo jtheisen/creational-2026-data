@@ -52,6 +52,20 @@ verify actual size and query performance after each rebuild.
 | `Page.IX_Page_Title` | 57.9 | 31.4 |
 | `Image.UQ_Image_SourceTitle` | 51.0 | 21.7 |
 
+The UTF-8 conversion finished on 2026-10-25 after the user scaled the
+database from Basic to Standard S1. An in-flight `TaxonName` rewrite was
+interrupted by the scale change and the idempotent migration resumed. All
+text columns now report `VARCHAR` with UTF-8 collations, including binary
+UTF-8 for the canonical image title. The page-title, image-title, and
+unlinked-page-image indexes are present; catalog row counts and link/DFS
+validation still match the pre-migration results. The data file allocated
+1,616 MiB after conversion, while its configured maximum remained 2,048 MiB.
+Before compression, `TaxonName` reserved 377.9 MiB, `Image` 199.4 MiB,
+`Page` 100.3 MiB, and `PageImage` 195.0 MiB. Converting text alone therefore
+did not free file space; the next measured step is rebuilding selected
+indexes with compression. These current figures supersede the opening
+pre-migration table for capacity planning.
+
 No catalog table or index currently uses SQL data compression; the live
 partitions all report `DATA_COMPRESSION = NONE`. Benchmark `PAGE` compression
 for text-bearing tables, especially `TaxonName`, and then `Page`, `Image`, and

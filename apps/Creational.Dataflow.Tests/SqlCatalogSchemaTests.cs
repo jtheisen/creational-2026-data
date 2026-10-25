@@ -130,10 +130,54 @@ public sealed class SqlCatalogSchemaTests
             Assert.Equal("smallint", await TypeAsync(schema, "Collection", "CollectionId", connection, transaction));
             Assert.Equal("int", await TypeAsync(schema, "Taxon", "OttId", connection, transaction));
             Assert.Equal("bigint", await TypeAsync(schema, "Page", "PageId", connection, transaction));
+            Assert.Equal("varchar", await TypeAsync(schema, "TaxonName", "Name", connection, transaction));
+            Assert.Equal("varchar", await TypeAsync(schema, "Image", "CanonicalFileTitle", connection, transaction));
             var duplicate = await Assert.ThrowsAsync<SqlException>(() => ExecuteAsync(
                 $"INSERT INTO [{schema}].Image(SourceWiki,CanonicalFileTitle) VALUES ('enwiki',N'File:Example.jpg')",
                 connection, transaction));
             Assert.True(duplicate.Number is 2601 or 2627);
+            await transaction.RollbackAsync();
+        }
+        finally
+        {
+            await using var drop = new SqlCommand($"DROP SCHEMA [{schema}]", connection);
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Utf8MigrationPreservesNamesAndBinaryDistinctImageTitles()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_TEST_CONNECTION_STRING");
+        if (string.IsNullOrWhiteSpace(connectionString)) return;
+        var schema = "ct_" + Guid.NewGuid().ToString("N")[..12];
+        await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+        await using (var create = new SqlCommand($"CREATE SCHEMA [{schema}]", connection))
+            await create.ExecuteNonQueryAsync();
+        try
+        {
+            await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync();
+            await ExecuteAsync(SqlCatalogSchema.RenderLegacy(schema), connection, transaction);
+            await ExecuteAsync($"INSERT INTO [{schema}].Collection(CollectionId,CollectionKey) VALUES (1,N'enwiki')", connection, transaction);
+            await ExecuteAsync($"INSERT INTO [{schema}].TaxonomyTree(TreeId,TreeKey) VALUES (1,N'ott')", connection, transaction);
+            await ExecuteAsync($"INSERT INTO [{schema}].Taxon(TreeId,OttId,DfsStart,DfsEndExclusive) VALUES (1,1,1,2)", connection, transaction);
+            await ExecuteAsync($"INSERT INTO [{schema}].TaxonName(TreeId,OttId,Name) VALUES (1,1,N'中 𐀀 é')", connection, transaction);
+            await ExecuteAsync($"INSERT INTO [{schema}].Page(CollectionId,PageId,Title) VALUES (1,1,N'Élan 𐀀')", connection, transaction);
+            await ExecuteAsync($"INSERT INTO [{schema}].Image(SourceWiki,CanonicalFileTitle,SourceSha1) VALUES ('commonswiki',N'File:Élan.jpg','abc'),('commonswiki',N'File:élan.jpg','def')", connection, transaction);
+            await ExecuteAsync($"INSERT INTO [{schema}].PageImage(CollectionId,PageId,ReferenceIndex,FileTitle,SourceWiki,Role) VALUES (1,1,0,N'File:Élan.jpg','commonswiki','taxobox')", connection, transaction);
+
+            var steps = SqlCatalogSchema.RenderUtf8ConversionSteps(schema);
+            Assert.True(steps.Count >= 10);
+            await ExecuteAsync(steps[0], connection, transaction);
+            foreach (var step in steps) await ExecuteAsync(step, connection, transaction);
+            foreach (var step in steps) await ExecuteAsync(step, connection, transaction);
+
+            Assert.Equal("varchar", await TypeAsync(schema, "TaxonName", "Name", connection, transaction));
+            Assert.Equal("varchar", await TypeAsync(schema, "Page", "Title", connection, transaction));
+            Assert.Equal("varchar", await TypeAsync(schema, "Image", "CanonicalFileTitle", connection, transaction));
+            Assert.Equal(2, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].Image", connection, transaction));
+            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].TaxonName WHERE Name='中 𐀀 é'", connection, transaction));
+            Assert.Equal(1, await ScalarAsync($"SELECT COUNT(*) FROM [{schema}].PageImage WHERE FileTitle='File:Élan.jpg'", connection, transaction));
             await transaction.RollbackAsync();
         }
         finally

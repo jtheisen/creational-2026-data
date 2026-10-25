@@ -31,6 +31,24 @@ if (args.Length == 1 && args[0] == "--sql-capacity")
     return;
 }
 
+if (args.Length == 1 && args[0] == "--migrate-sql-utf8")
+{
+    var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
+        ?? throw new InvalidOperationException("Set CREATIONAL_SQL_CONNECTION_STRING for SQL migration.");
+    var schema = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CATALOG_SCHEMA") ?? "catalog";
+    await using var connection = await new SqlConnectionFactory(connectionString).OpenAsync(CancellationToken.None);
+    var steps = SqlCatalogSchema.RenderUtf8ConversionSteps(schema);
+    for (var i = 0; i < steps.Count; i++)
+    {
+        Console.Error.WriteLine($"UTF-8 migration step {i + 1}/{steps.Count}");
+        await using var command = new Microsoft.Data.SqlClient.SqlCommand(steps[i], connection)
+        { CommandTimeout = 1800 };
+        await command.ExecuteNonQueryAsync();
+    }
+    Console.WriteLine($"Completed {steps.Count} UTF-8 migration steps.");
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--sql-estimate-page" && int.TryParse(args[2], out var indexId))
 {
     var connectionString = Environment.GetEnvironmentVariable("CREATIONAL_SQL_CONNECTION_STRING")
