@@ -21,6 +21,13 @@ public static partial class SqlCatalogSchema
         => RenderUtf8Conversion(schema).ReplaceLineEndings("\n")
             .Split("\n\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
+    public static string RenderPageCompression(string schema)
+        => RenderResource(schema, "004_page_compression.sql");
+
+    public static IReadOnlyList<string> RenderPageCompressionSteps(string schema)
+        => RenderPageCompression(schema).ReplaceLineEndings("\n")
+            .Split("\n\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
     public static string RenderTaxonPageDfsColumn(string schema)
         => RenderResource(schema, "002_taxon_page_dfs.sql");
 

@@ -66,25 +66,35 @@ did not free file space; the next measured step is rebuilding selected
 indexes with compression. These current figures supersede the opening
 pre-migration table for capacity planning.
 
-No catalog table or index currently uses SQL data compression; the live
-partitions all report `DATA_COMPRESSION = NONE`. Benchmark `PAGE` compression
-for text-bearing tables, especially `TaxonName`, and then `Page`, `Image`, and
-`PageImage` as appropriate. Measure reserved space, rebuild time, and query and
-write performance before applying it to the live Basic database. Indexes need
-to be assessed separately from their tables.
+The six measured indexes were rebuilt with `PAGE` compression on Standard S1,
+after raising the configured maximum to 5 GiB for rebuild headroom. A sampled,
+cleanly rebuilt `TaxonName` index used 3.781 MiB uncompressed and 3.258 MiB
+with `PAGE`; its post-conversion live index had substantial free space from
+the type rewrite. The live rebuilds completed without interruption:
 
-The database collation is `Latin1_General_100_CI_AS_SC_UTF8`. The intended SQL
-schema uses `VARCHAR` for **all text columns**, not `NVARCHAR`; this applies to
-taxon names, page and image titles, collection and tree keys, rights fields,
-errors, and load keys. Review fixed-width textual hashes currently declared as
-`CHAR` as part of that consistency pass (or store their decoded bytes as
-`BINARY`). The existing loaded schema still has `NVARCHAR` columns, so this
-requires a later migration, not just a change to the initial schema script.
-Keep exact image-title comparisons with an explicit binary UTF-8 collation and
-update loader staging columns, casts, and parameters as needed. Check the byte
-limits against real data: `VARCHAR(n)` limits bytes, whereas `NVARCHAR(n)`
-limits two-byte units. Measure the resulting space savings before relying on
-them for Basic-tier capacity.
+| Table | Reserved MiB before PAGE | Reserved MiB after PAGE |
+|---|---:|---:|
+| TaxonName | 377.9 | 91.4 |
+| Image | 199.4 | 57.9 |
+| Page | 100.3 | 30.4 |
+| PageImage | 195.0 | 72.5 |
+
+`TaxonName.PK_TaxonName`, both `Image` indexes, both `Page` indexes, and
+`PageImage.PK_PageImage` now report `PAGE`. `PageImage.IX_PageImage_Image`
+remains uncompressed; the other tables were not changed. The catalog row counts,
+linked references, DFS positions, and 901,014,677,035-byte source sum remain
+unchanged. The Metazoa staged subtree query returned 320,503 pages and 242,696
+images in 21.1 seconds on its first S1 pass and 10.5 seconds on the repeat;
+these are not comparable to the earlier Basic timings as a compression-only
+benchmark. The SQL data file still allocates 1,680 MiB despite the lower table
+reservations, so free allocated pages may need reclamation before Basic offers
+the expected headroom. Its configured maximum is currently 5 GiB on S1.
+
+The database collation is `Latin1_General_100_CI_AS_SC_UTF8`. All current SQL
+text columns now use `VARCHAR` with UTF-8 collation. Canonical image-title
+comparisons use an explicit binary UTF-8 collation. `VARCHAR(n)` limits bytes,
+whereas the former `NVARCHAR(n)` declarations limited two-byte units; the
+migration used conservative byte limits and verified that no values were lost.
 
 `Taxon` is the largest table. After the operational migration, measure whether
 all of its stored columns and indexes are needed by the actual queries; some
