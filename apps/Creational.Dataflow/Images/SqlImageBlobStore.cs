@@ -204,7 +204,8 @@ public sealed class SqlImageBlobStore(BlobServiceClient service, TokenCredential
         }
         catch (RequestFailedException error) when (error.ErrorCode == "OperationNotAllowedOnAutomaticSnapshot")
         {
-            // Azure retains this automatic snapshot under the account's retention policy.
+            Console.Error.WriteLine($"Previous Blob version cleanup deferred for {blob.Name}: " +
+                "the identity needs permission to delete Blob versions.");
         }
         catch (Exception error) when (error is not OutOfMemoryException)
         {

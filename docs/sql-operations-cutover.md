@@ -33,6 +33,13 @@ checkpoint. The old asset is not deleted. Run `--sql-adoption-issues` for recent
 exceptions. Check destination Blob metadata and SQL `Rendition` flags before
 considering the migration complete.
 
+The app, worker, and adoption identity require permission to delete previous
+Blob versions on the `images` container for old versions to be soft deleted
+after verified replacement. The built-in Storage Blob Data Owner role supplies
+that permission; Storage Blob Data Contributor does not. The account currently
+retains soft-deleted versions for seven days. A cleanup failure is logged and
+does not change a verified publication into failed work.
+
 ## Control app
 
 Use `SqlOperational__Enabled=true` and

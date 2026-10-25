@@ -130,9 +130,7 @@ class AzureSqlResizeStore:
                 self._images.get_blob_client(f'creatures/w{width}/{image_id}',
                                              version_id=old.version_id).delete_blob()
             except Exception as error:
-                if not isinstance(error, HttpResponseError) or \
-                        (error.status_code != 404 and
-                         error.error_code != 'OperationNotAllowedOnAutomaticSnapshot'):
+                if not isinstance(error, HttpResponseError) or error.status_code != 404:
                     print(f'Previous rendition version cleanup deferred for {image_id}/{width}: '
                           f'{error}', file=sys.stderr)
 
