@@ -51,9 +51,12 @@ the rest of the repeat query spent about 12.4 seconds finding distinct images
 and 2.8 seconds summing their metadata.
 
 **Assessment:** Basic fits the catalog and gives usable response times for
-small clades. A broad Metazoa aggregate is too slow for an immediate dashboard
-response. Cache broad aggregates or compute them in background before routing
-the live dashboard to SQL. The 816 MiB headroom must also be checked against
+small clades. Exact subtree totals are needed on demand when previewing or
+focusing an OTT branch; they do not need continuous recomputation. A rare
+Metazoa-wide preview can show a loading state for roughly 20 seconds on a
+repeat query. Global work counters are a separate operational-state query and
+do not require this subtree join. Caching broad subtree results can wait until
+observed usage justifies it. The 816 MiB headroom must still be checked against
 rights, rendition, and operational tables before committing to Basic as the
 final tier. [The benchmark SQL](../apps/Creational.Dataflow/Sql/catalog_benchmark.sql)
 can be rerun for other roots.
@@ -62,8 +65,8 @@ can be rerun for other roots.
 
 The live dashboard and image workers still use Azure Tables. No image Blobs
 were renamed or copied. The next migration stage is the operational schema and
-repository, plus measurement of its rows and broad-aggregate strategy. Cutover
-requires those checks and a separate verification of existing image assets.
+repository, plus measurement of its rows. Cutover requires those checks and a
+separate verification of existing image assets.
 
 For local SQL work in this sandbox, set `AZURE_TOKEN_CREDENTIALS=AzureCliCredential`
 alongside `Authentication=Active Directory Default`. Without this selector,
