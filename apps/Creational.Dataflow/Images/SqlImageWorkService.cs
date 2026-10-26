@@ -118,7 +118,7 @@ public sealed class SqlImageWorkService(SqlImageWorkRepository repository, Wikim
     {
         var delay = error is WikimediaThrottledException throttled ? throttled.Delay :
             TimeSpan.FromSeconds(Math.Min(3600, 30 * Math.Pow(2, Math.Min(claim.AttemptNumber, 7))));
-        var blocked = error is InvalidDataException or ArgumentException;
+        var blocked = error is ThumbnailPermanentFailureException or InvalidDataException or ArgumentException;
         await repository.FailAsync(claim, error.Message, delay, blocked, ct);
         logger.LogWarning(error, "Image work failed for image {ImageId}, kind {Kind}, attempt {Attempt}",
             claim.ImageId, claim.Kind, claim.AttemptNumber);

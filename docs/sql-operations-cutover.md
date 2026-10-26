@@ -71,9 +71,13 @@ previously adopted pending renditions in bounded windows. `--sql-enqueue-pending
 Copy N` and `--sql-enqueue-pending Resize N` can seed a window manually without
 enabling the kind. Each queue is capped relative to its concurrency, so the
 dispatchers materialize only a small number of eligible rows per cycle.
-Positive minimum priorities use an indexed image-priority seek; a zero minimum
-uses pending-rendition indexes so an idle resize cycle does not scan completed
-source images.
+The effective minimum is at least 1, so queue filling uses the indexed image
+priority seek rather than scanning every pending rendition.
+
+A thumbnail over the 16 MiB import limit or Wikimedia's specific "failing
+image" response blocks that image's copy item instead of retrying it forever.
+Ordinary throttling and server errors remain retryable. Changing the image's
+priority explicitly reopens blocked items if a later manual retry is wanted.
 
 ## Worker and recovery
 

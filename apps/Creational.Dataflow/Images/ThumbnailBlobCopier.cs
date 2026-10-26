@@ -11,6 +11,8 @@ public sealed class WikimediaThrottledException(TimeSpan delay) : Exception("Wik
     public TimeSpan Delay { get; } = delay;
 }
 
+public sealed class ThumbnailPermanentFailureException(string message) : Exception(message);
+
 public sealed record ThumbnailCopyResult(long Bytes, string Sha256);
 
 public interface IThumbnailBlobCopier
@@ -64,13 +66,13 @@ public sealed class ThumbnailBlobCopier(HttpClient http, BlobServiceClient servi
             response.Content.Headers.ContentLength is > 0 and <= 256 &&
             (await response.Content.ReadAsStringAsync(ct)).Contains(
                 "Too many thumbnail requests for failing image", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException(
+            throw new ThumbnailPermanentFailureException(
                 "Wikimedia reports too many thumbnail requests for a failing image.");
         if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.ServiceUnavailable)
             throw new WikimediaThrottledException(response.Headers.RetryAfter?.Delta ?? TimeSpan.FromMinutes(1));
         response.EnsureSuccessStatusCode();
         if (response.Content.Headers.ContentLength is > MaxBytes)
-            throw new InvalidOperationException("Thumbnail exceeds the 16 MiB import limit.");
+            throw new ThumbnailPermanentFailureException("Thumbnail exceeds the 16 MiB import limit.");
 
         await using var source = await response.Content.ReadAsStreamAsync(ct);
         await using var buffer = new MemoryStream();
@@ -79,7 +81,7 @@ public sealed class ThumbnailBlobCopier(HttpClient http, BlobServiceClient servi
         while ((read = await source.ReadAsync(chunk, ct)) != 0)
         {
             if (buffer.Length + read > MaxBytes)
-                throw new InvalidOperationException("Thumbnail exceeds the 16 MiB import limit.");
+                throw new ThumbnailPermanentFailureException("Thumbnail exceeds the 16 MiB import limit.");
             await buffer.WriteAsync(chunk.AsMemory(0, read), ct);
         }
         if (buffer.Length == 0) throw new InvalidOperationException("Wikimedia returned an empty thumbnail.");
